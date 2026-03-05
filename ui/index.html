@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vite App</title>
+</head>
+
+<body>
+  <div id="native-error-box"
+    style="display:none; position:fixed; z-index:999999; top:0; left:0; width:100%; height:100%; background:#b91c1c; color:white; padding:40px; font-family:monospace; font-size:16px; overflow-y:auto; word-wrap:break-word;">
+  </div>
+  <script>
+    window.onerror = function (msg, url, line, col, error) {
+      document.getElementById('native-error-box').style.display = 'block';
+      let stack = error && error.stack ? error.stack : '';
+      document.getElementById('native-error-box').innerHTML += "<h1>Fatal Native JS Error 💥</h1><p><b>Message:</b> " + msg + "</p><p><b>Location:</b> " + url + ":" + line + ":" + col + "</p><pre style='background:rgba(0,0,0,0.5); padding:20px; border-radius:8px;'>" + stack + "</pre>";
+      return false;
+    };
+    window.addEventListener("unhandledrejection", function (event) {
+      document.getElementById('native-error-box').style.display = 'block';
+      document.getElementById('native-error-box').innerHTML += "<h1>Unhandled Promise Rejection 💥</h1><pre style='background:rgba(0,0,0,0.5); padding:20px; border-radius:8px;'>" + (event.reason && event.reason.stack ? event.reason.stack : event.reason) + "</pre>";
+    });
+  </script>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>

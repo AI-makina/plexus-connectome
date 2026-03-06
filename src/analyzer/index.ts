@@ -8,6 +8,7 @@ import {
     extractReactComponents, extractHooks, extractRouteHandlers,
     extractTypesAndInterfaces, extractCallGraph, extractJSXComposition,
     extractEnvVars, extractEventPatterns, extractImportsDetailed, extractExports,
+    extractCSSPositioning, extractDOMMeasurements
 } from './parsers';
 import { buildRelationships, resetRelationshipTracking } from './relationships';
 import { getIntegrationPath } from '../core/context';
@@ -361,6 +362,45 @@ export class CodeAnalyzer {
             graph.addNode(node);
             childNodeIds.set(t.name, node.id);
             graph.addSynapse(createSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes', description: `${moduleNode.name} defines ${t.name}` }));
+        }
+
+
+
+        // --- CSS/JS Rendering Simulator (Active Static Analysis) ---
+        // Scan for Viewport vs Absolute Rendering Desync Vulnerabilities
+        const cssPos = extractCSSPositioning(sf);
+        const domMath = extractDOMMeasurements(sf);
+
+        if (cssPos.length > 0 && domMath.length > 0) {
+            // Document contains both absolute/fixed positioning AND viewport math.
+            // This is the identical signature to Amygdala bug a98b3c4f.
+            const warningNodeId = 'AMYGDALA-a98b3c4f';
+
+            // Check if the warning node exists (it won't on first run, so create a placeholder)
+            if (!graph.nodes.has(warningNodeId)) {
+                const amygdalaNode = createNode({
+                    id: warningNodeId,
+                    name: 'Viewport Coordinates vs. Absolute Positioning Rendering Desync',
+                    type: 'config',
+                    region: 'amygdala',
+                    file_path: 'amygdala-log.json',
+                    description: 'Amygdala Entry a98b3c4f: The math uses getBoundingClientRect() which is strictly viewport-relative, but it applies to a position: absolute/fixed element.',
+                    tags: ['critical', 'amygdala'],
+                    metadata: {}
+                });
+                graph.addNode(amygdalaNode);
+            }
+
+            // Create a warning synapse alerting the developer to the risk
+            graph.addSynapse(createSynapse({
+                source_node_id: moduleNode.id,
+                target_node_id: warningNodeId,
+                type: 'amygdala_warning',
+                description: `CRITICAL RISK: ${moduleNode.name} mixes getBoundingClientRect() and position:${cssPos[0].property}. Prevent rendering desyncs by using position:fixed or injecting window.scrollY.`,
+                strength: 3.0 // Max strength for critical warning
+            }));
+
+            console.log(`[Plexus Simulator] ⚠️ WARNING INJECTED: Detected CSS/JS Render Desync signature in ${moduleNode.name}`);
         }
 
         // Extract env vars

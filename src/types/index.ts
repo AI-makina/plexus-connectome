@@ -78,7 +78,8 @@ export type SynapseType =
     | 'listens' | 'provides' | 'consumes' | 'inherits' | 'overrides' | 'routes_to'
     | 'validates' | 'transforms' | 'caches' | 'schedules' | 'wraps' | 'composes'
     | 'depends_on' | 'configures' | 'styles' | 'animates' | 'guards' | 'redirects'
-    | 'emits' | 'subscribes';
+    | 'emits' | 'subscribes'
+    | 'amygdala_warning';
 
 export interface SynapseMetadata {
     data_shape_transferred?: any;

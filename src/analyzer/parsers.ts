@@ -423,3 +423,41 @@ export function extractExports(sf: SourceFile): ExtractedExport[] {
 
     return exports;
 }
+
+// ─── CSS & DOM Render Vulnerabilities ──────────────────────────────
+
+export interface ExtractedCSSPosition {
+    line: number;
+    property: 'absolute' | 'fixed';
+}
+
+export interface ExtractedDOMMath {
+    line: number;
+    method: 'getBoundingClientRect';
+}
+
+export function extractCSSPositioning(sf: SourceFile): ExtractedCSSPosition[] {
+    const findings: ExtractedCSSPosition[] = [];
+    const text = sf.getFullText();
+    const regex = /position\s*:\s*(absolute|fixed)/g;
+
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+        const line = text.substring(0, match.index).split('\n').length;
+        findings.push({ line, property: match[1] as 'absolute' | 'fixed' });
+    }
+    return findings;
+}
+
+export function extractDOMMeasurements(sf: SourceFile): ExtractedDOMMath[] {
+    const findings: ExtractedDOMMath[] = [];
+    const text = sf.getFullText();
+    const regex = /\.getBoundingClientRect\s*\(/g;
+
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+        const line = text.substring(0, match.index).split('\n').length;
+        findings.push({ line, method: 'getBoundingClientRect' });
+    }
+    return findings;
+}

@@ -82,7 +82,7 @@ fs.watch(commandsFile, (eventType) => {
 });
 
 // Start Backend Server
-app.listen(PORT, () => {
+app.listen(PORT as number, '0.0.0.0', () => {
     console.log(`[Plexus Engine] API Server running on port ${PORT}`);
     console.log(`[Plexus Engine] Integration Path: ${integrationPath}`);
 });
@@ -103,7 +103,7 @@ uiApp.use((req, res, next) => {
 uiApp.use(express.static(uiPath));
 uiApp.use((_req, res) => res.sendFile(path.join(uiPath, 'index.html')));
 
-uiApp.listen(UI_PORT, () => {
+uiApp.listen(UI_PORT as number, '0.0.0.0', () => {
     console.log(`[Plexus Engine] UI Server running on port ${UI_PORT}`);
     open(`http://localhost:${UI_PORT}`);
 });

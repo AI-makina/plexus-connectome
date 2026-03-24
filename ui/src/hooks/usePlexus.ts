@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 
+// Derive API URL from current window location
+// UI runs on ws_port, API runs on ws_port - 1
+const currentPort = parseInt(window.location.port, 10) || 3201;
+const API_BASE = `http://localhost:${currentPort - 1}`;
+
 export interface PlexusData {
     nodes: any[];
     synapses: any[];
@@ -21,9 +26,9 @@ export function usePlexus() {
         try {
             setLoading(true);
             const [nodes, synapses, amygdala] = await Promise.all([
-                axios.get('http://localhost:3200/api/nodes'),
-                axios.get('http://localhost:3200/api/synapses'),
-                axios.get('http://localhost:3200/api/amygdala')
+                axios.get(`${API_BASE}/api/nodes`),
+                axios.get(`${API_BASE}/api/synapses`),
+                axios.get(`${API_BASE}/api/amygdala`)
             ]);
             setData({
                 nodes: Array.isArray(nodes.data) ? nodes.data : [],
@@ -39,7 +44,7 @@ export function usePlexus() {
 
     const runSimulation = async (nodeId: string) => {
         try {
-            const res = await axios.post('http://localhost:3200/api/simulate/impact', {
+            const res = await axios.post(`${API_BASE}/api/simulate/impact`, {
                 node_ids: [nodeId],
                 change_type: 'modify'
             });

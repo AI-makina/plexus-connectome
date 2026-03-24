@@ -10,7 +10,6 @@ import path from 'path';
 import express from 'express';
 import open from 'open';
 
-const PORT = process.env.PORT || 3200;
 const targetAppPath = process.argv[2] || process.cwd();
 const integrationPath = path.join(targetAppPath, 'plexus-integration');
 
@@ -19,10 +18,16 @@ setContext(integrationPath, targetAppPath);
 
 // 2. Load manifest
 const manifestPath = path.join(integrationPath, 'plexus-manifest.json');
+let manifest: PlexusManifest | null = null;
 if (fs.existsSync(manifestPath)) {
-    const manifest: PlexusManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    setManifest(manifest);
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    setManifest(manifest!);
 }
+
+// Read ports from manifest first, then env, then defaults
+// This allows multiple Plexus instances to run on different ports per project
+const PORT = manifest?.server?.api_port || parseInt(process.env.PLEXUS_PORT || '', 10) || 3200;
+const UI_PORT_FROM_MANIFEST = manifest?.server?.ws_port || parseInt(process.env.PLEXUS_UI_PORT || '', 10) || 3201;
 
 // 3. Init DB
 initDb(integrationPath);
@@ -90,7 +95,7 @@ app.listen(PORT as number, '0.0.0.0', () => {
 // Start UI Server
 const uiApp = express();
 const uiPath = path.join(__dirname, '../ui/dist');
-const UI_PORT = process.env.UI_PORT || 3201;
+const UI_PORT = UI_PORT_FROM_MANIFEST;
 
 // Force browser to never cache the UI bundle while we debug
 uiApp.use((req, res, next) => {
@@ -105,5 +110,8 @@ uiApp.use((_req, res) => res.sendFile(path.join(uiPath, 'index.html')));
 
 uiApp.listen(UI_PORT as number, '0.0.0.0', () => {
     console.log(`[Plexus Engine] UI Server running on port ${UI_PORT}`);
-    open(`http://localhost:${UI_PORT}`);
+    // Only auto-open browser if not launched by a parent process (e.g., Areopagus)
+    if (!process.env.PLEXUS_NO_OPEN) {
+        open(`http://localhost:${UI_PORT}`);
+    }
 });

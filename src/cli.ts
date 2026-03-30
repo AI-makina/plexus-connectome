@@ -113,7 +113,17 @@ program
     .action((options: any) => {
         const targetPath = path.resolve(options.path);
         console.log(`Booting server for ${targetPath}...`);
-        execSync(`node "${path.join(__dirname, 'index.js')}" "${targetPath}"`, { stdio: 'inherit' });
+        // Use spawn (not execSync) so the server process isn't killed when the parent exits
+        const child = require('child_process').spawn(
+            process.execPath,
+            [path.join(__dirname, 'index.js'), targetPath],
+            { stdio: 'inherit' }
+        );
+        child.on('exit', (code: number | null) => process.exit(code ?? 1));
+        // Forward signals to the child so graceful shutdown works
+        for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+            process.on(sig, () => child.kill(sig));
+        }
     });
 
 program.parse(process.argv);

@@ -32,17 +32,23 @@ const outDir = process.argv[3] || '/tmp/plexus-shots';
     if (input) {
         await input.click();
         await input.type('server', { delay: 30 });
-        await new Promise(r => setTimeout(r, 2000));
-        await page.screenshot({ path: path.join(outDir, '02-node-selected.png') });
+        await new Promise(r => setTimeout(r, 1200));
+        await page.screenshot({ path: path.join(outDir, '02-search.png') });
+
+        // New UI: Enter selects the first dropdown result; old UI: typing already auto-selected.
+        await page.keyboard.press('Enter');
+        await new Promise(r => setTimeout(r, 1800));
+        await page.screenshot({ path: path.join(outDir, '03-node-selected.png') });
 
         const clicked = await page.evaluate(() => {
-            const btn = [...document.querySelectorAll('button')].find(b => b.textContent.includes('Simulate'));
+            const btn = [...document.querySelectorAll('button')]
+                .find(b => /simulat/i.test(b.textContent || ''));
             if (btn) { btn.click(); return true; }
             return false;
         });
         if (clicked) {
-            await new Promise(r => setTimeout(r, 3000));
-            await page.screenshot({ path: path.join(outDir, '03-simulation.png') });
+            await new Promise(r => setTimeout(r, 3500));
+            await page.screenshot({ path: path.join(outDir, '04-simulation.png') });
         } else {
             console.log('WARN: Simulate button not found');
         }

@@ -1,10 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import { REGIONS } from '../theme/regions';
 
 // Derive API URL from current window location
 // UI runs on ws_port, API runs on ws_port - 1
 const currentPort = parseInt(window.location.port, 10) || 3201;
-const API_BASE = `http://localhost:${currentPort - 1}`;
+export const API_BASE = `http://localhost:${currentPort - 1}`;
+
+// Auto-retry backoff ladder (DESIGN_SPEC §5.13): 2s → 5s → 10s → 30s cap.
+const BACKOFF_STEPS = [2, 5, 10, 30];
 
 export interface PlexusData {
     nodes: any[];
@@ -22,9 +26,61 @@ export function usePlexus() {
     const [simulationResult, setSimulationResult] = useState<any | null>(null);
     const [simulationTimestamp, setSimulationTimestamp] = useState<number | null>(null);
 
+    // Region filter (DESIGN_SPEC §5.7) — independent of showDormant to avoid
+    // combinatorial filter bugs. Empty Set = all regions visible.
+    const [hiddenRegions, setHiddenRegions] = useState<Set<string>>(new Set());
+
+    // Engine reachability (DESIGN_SPEC §5.13).
+    const [error, setError] = useState<string | null>(null);   // initial-load failure (no data yet)
+    const [linkLost, setLinkLost] = useState(false);           // failure after data had loaded
+    const [retryIn, setRetryIn] = useState<number | null>(null); // seconds until next auto-retry
+
+    const hasDataRef = useRef(false);
+    const failCountRef = useRef(0);
+    const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const fetchRef = useRef<() => void>(() => { });
+
+    const clearCountdown = () => {
+        if (countdownRef.current) {
+            clearInterval(countdownRef.current);
+            countdownRef.current = null;
+        }
+    };
+
+    // Backoff 2s → 5s → 10s → 30s cap, ticking a 1s countdown for the banner.
+    const scheduleRetry = () => {
+        failCountRef.current += 1;
+        const delay = BACKOFF_STEPS[Math.min(failCountRef.current - 1, BACKOFF_STEPS.length - 1)];
+        clearCountdown();
+        let remaining = delay;
+        setRetryIn(remaining);
+        countdownRef.current = setInterval(() => {
+            remaining -= 1;
+            if (remaining <= 0) {
+                clearCountdown();
+                setRetryIn(null);
+                fetchRef.current();
+            } else {
+                setRetryIn(remaining);
+            }
+        }, 1000);
+    };
+
+    const handleFetchFailure = (e: any) => {
+        if (hasDataRef.current) {
+            setLinkLost(true); // had data → slim ENGINE LINK LOST banner
+        } else {
+            setError(e?.message || 'Connection failed'); // no data yet → full-screen card
+        }
+        scheduleRetry();
+    };
+
     const fetchData = async () => {
+        clearCountdown();
+        setRetryIn(null);
         try {
-            setLoading(true);
+            // Don't flip the boot screen / unreachable card during background auto-retries.
+            if (failCountRef.current === 0) setLoading(true);
             const [nodes, synapses, amygdala] = await Promise.all([
                 axios.get(`${API_BASE}/api/nodes`),
                 axios.get(`${API_BASE}/api/synapses`),
@@ -35,11 +91,21 @@ export function usePlexus() {
                 synapses: Array.isArray(synapses.data) ? synapses.data : [],
                 amygdala: Array.isArray(amygdala.data) ? amygdala.data : []
             });
+            hasDataRef.current = true;
+            failCountRef.current = 0;
+            setError(null);
+            setLinkLost(false);
         } catch (e) {
             console.error("Failed to fetch Plexus data", e);
+            handleFetchFailure(e);
         } finally {
             setLoading(false);
         }
+    };
+    fetchRef.current = fetchData;
+
+    const retryNow = () => {
+        fetchData(); // clears any pending countdown itself
     };
 
     const runSimulation = async (nodeId: string) => {
@@ -52,11 +118,39 @@ export function usePlexus() {
             setSimulationTimestamp(Date.now());
         } catch (e) {
             console.error("Simulation failed", e);
+            if (hasDataRef.current) {
+                setLinkLost(true);
+                scheduleRetry();
+            }
         }
     };
 
+    // §5.7 — click toggles region visibility.
+    const toggleRegion = (region: string) => {
+        setHiddenRegions(prev => {
+            const next = new Set(prev);
+            if (next.has(region)) next.delete(region);
+            else next.add(region);
+            return next;
+        });
+    };
+
+    // §5.7 — ⌥-click solos a region (hides all others); soloing the lone
+    // visible region resets to all visible.
+    const soloRegion = (region: string) => {
+        setHiddenRegions(prev => {
+            const all = Object.keys(REGIONS);
+            const visible = all.filter(r => !prev.has(r));
+            if (visible.length === 1 && visible[0] === region) return new Set<string>();
+            return new Set(all.filter(r => r !== region));
+        });
+    };
+
+    const resetRegions = () => setHiddenRegions(new Set<string>());
+
     useEffect(() => {
-        fetchData();
+        fetchRef.current();
+        return clearCountdown;
     }, []);
 
     return {
@@ -75,6 +169,16 @@ export function usePlexus() {
         selectedSynapse,
         setSelectedSynapse,
         runSimulation,
-        refresh: fetchData
+        refresh: fetchData,
+        // §5.7 region filter
+        hiddenRegions,
+        toggleRegion,
+        soloRegion,
+        resetRegions,
+        // §5.13 engine reachability
+        error,
+        linkLost,
+        retryIn,
+        retryNow
     };
 }

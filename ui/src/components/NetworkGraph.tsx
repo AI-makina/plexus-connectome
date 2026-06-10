@@ -1,16 +1,29 @@
-import React, { useMemo, useState, useRef, Suspense, useEffect } from 'react';
+import React, { useMemo, useState, useRef, Suspense, useEffect, useLayoutEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Sphere, QuadraticBezierLine, Html, Stars } from '@react-three/drei';
+import { OrbitControls, Sphere, QuadraticBezierLine, Html, Grid, Billboard, PerformanceMonitor } from '@react-three/drei';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import { forceSimulation, forceLink, forceManyBody, forceCenter } from 'd3-force-3d';
 import * as THREE from 'three';
 
-// ─── Region Colors (§3) — single source of truth in theme/regions.js ────────
-import { REGION_COLORS } from '../theme/regions';
+// ─── Region colors — single source of truth in theme/regions.js (§4) ────────
+import { REGIONS, REGION_COLORS } from '../theme/regions';
+
+// ─── Render quality state machine (§6.8) ────────────────────────────────────
+import { useQuality } from '../hooks/useQuality';
+
+// §7: reduced motion disables count-ups, slides, ring rotation, arrival shot.
+const REDUCED_MOTION =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const EMPTY_SET = new Set<string>();
+const ORIGIN = new THREE.Vector3(0, 0, 0);
 
 // ─── Region Spatial Positions & Radii (§3.10) ────────────────────────────────
 // Real anatomical coordinates forming a lateral-view human brain shape
 // Coordinate system: X=left/right, Y=up/down, Z=front/back
+// §6.2: if this scale ever changes, retune fog [160, 420] and grid y=-95 too.
 const REGION_BOUNDS: Record<string, { x: number; y: number; z: number; rx: number; ry: number; rz: number }> = {
     frontal_lobe: { x: 0, y: 30, z: 50, rx: 35, ry: 40, rz: 40 }, // Front-top
     parietal_lobe: { x: 0, y: 50, z: 0, rx: 35, ry: 30, rz: 35 }, // Top-center/back
@@ -23,11 +36,118 @@ const REGION_BOUNDS: Record<string, { x: number; y: number; z: number; rx: numbe
     corpus_callosum: { x: 0, y: 20, z: 10, rx: 15, ry: 10, rz: 25 }  // Center-top
 };
 
-// ─── Node Mesh (§10.2) ──────────────────────────────────────────────────────
-// Glowing sphere. Size scales with connection count. Color = region color.
-function NodeMesh({ node, isSelected, isSimulated, onClick, connectionCount, _tick, simStartTime }: any) {
-    const color = REGION_COLORS[node.region] || '#FFFFFF';
+// ─── Low-mode selection halo (§6.8) ──────────────────────────────────────────
+// One shared pre-baked 128px radial-gradient CanvasTexture; tinted via the
+// sprite material color to the region hex, additive blending. Attached only
+// to the selected node when quality === 'low' so selection still glows
+// without postprocessing. One texture total.
+let _haloTexture: THREE.CanvasTexture | null = null;
+function getHaloTexture() {
+    if (_haloTexture) return _haloTexture;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+        const grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+        grad.addColorStop(0, 'rgba(255,255,255,0.85)');
+        grad.addColorStop(0.4, 'rgba(255,255,255,0.25)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 128, 128);
+    }
+    _haloTexture = new THREE.CanvasTexture(canvas);
+    return _haloTexture;
+}
+
+// ─── Simulation wave — risk scale (§6.4) ────────────────────────────────────
+const SIM_WAVE: Record<string, { color: string; intensity: number }> = {
+    critical: { color: '#E5484D', intensity: 2.2 },
+    high: { color: '#E08A39', intensity: 1.8 },
+    moderate: { color: '#D9B13D', intensity: 1.4 },
+    low: { color: '#C8CFDA', intensity: 1.0 },
+};
+
+// ─── Selection reticle (§6.5) ────────────────────────────────────────────────
+// Camera-facing precision crosshair, not a glow. Inner ring #E7E9EC, outer
+// ring in region hex rotating 0.15 rad/s. Scales in 1.3×→1× over 200ms.
+function SelectionReticle({ size, hex }: any) {
+    const groupRef = useRef<any>(null);
+    const outerRef = useRef<any>(null);
+    const startRef = useRef<number>(-1);
+
+    useFrame((state, delta) => {
+        if (REDUCED_MOTION) return;
+        if (startRef.current < 0) startRef.current = state.clock.elapsedTime;
+        const t = Math.min(1, (state.clock.elapsedTime - startRef.current) / 0.2);
+        const eased = 1 - Math.pow(1 - t, 3); // ease-out
+        if (groupRef.current) groupRef.current.scale.setScalar(1.3 + (1.0 - 1.3) * eased);
+        if (outerRef.current) outerRef.current.rotation.z += 0.15 * delta;
+    });
+
+    return (
+        <Billboard>
+            <group ref={groupRef} scale={REDUCED_MOTION ? 1 : 1.3}>
+                <mesh>
+                    <ringGeometry args={[size * 1.5, size * 1.55, 48]} />
+                    <meshBasicMaterial color="#E7E9EC" transparent opacity={0.9} depthTest={false} side={THREE.DoubleSide} />
+                </mesh>
+                <mesh ref={outerRef}>
+                    <ringGeometry args={[size * 1.9, size * 1.92, 48]} />
+                    <meshBasicMaterial color={hex} transparent opacity={0.5} side={THREE.DoubleSide} />
+                </mesh>
+            </group>
+        </Billboard>
+    );
+}
+
+// ─── 3D node tooltip (§5.14) ─────────────────────────────────────────────────
+function NodeTooltip({ node, hex }: any) {
+    const [visible, setVisible] = useState(false);
+    useEffect(() => {
+        const id = requestAnimationFrame(() => setVisible(true));
+        return () => cancelAnimationFrame(id);
+    }, []);
+
+    const regionLabel = (REGIONS as any)[node.region]?.label || node.region || '';
+    const line2 = [regionLabel, node.code].filter(Boolean).join(' · ');
+
+    return (
+        <Html distanceFactor={15} zIndexRange={[10, 0]}>
+            <div
+                className="pointer-events-none whitespace-nowrap"
+                style={{
+                    background: 'rgba(13,14,16,0.92)',
+                    border: '1px solid var(--line-strong)',
+                    borderLeft: `2px solid ${hex}`,
+                    borderRadius: 'var(--radius)',
+                    padding: '6px 10px',
+                    boxShadow: 'var(--shadow-tooltip)',
+                    opacity: visible ? 1 : 0,
+                    transition: 'opacity 120ms linear',
+                }}
+            >
+                <div style={{ font: '500 12px/16px var(--font-sans)', color: 'var(--text-hi)' }}>{node.name}</div>
+                <div style={{ font: '400 10px/14px var(--font-mono)', color: 'var(--text-lo)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    {line2}
+                </div>
+            </div>
+        </Html>
+    );
+}
+
+// ─── Node Mesh (§6.4) ────────────────────────────────────────────────────────
+// Matte instrument sphere. Size scales with connection count. Color = region
+// hex darkened 40%; emissive = region hex. Glow is earned (selection 1.3,
+// simulation wave 1.4–2.2) — the resting scene stays under bloom threshold.
+function NodeMesh({ node, isSelected, isSimulated, onClick, connectionCount, _tick, simStartTime, hidden, quality }: any) {
+    const hex = REGION_COLORS[node.region] || '#FFFFFF';
     const materialRef = useRef<any>(null);
+    const meshRef = useRef<any>(null);
+    const [hovered, setHovered] = useState(false);
+
+    // §6.4: color = region hex darkened 40%
+    const baseColor = useMemo(() => new THREE.Color(hex).multiplyScalar(0.6), [hex]);
+    const targetEmissiveColor = useMemo(() => new THREE.Color(hex), [hex]);
 
     // §10.2: size = baseSize + (connectionCount * 0.3) + (stabilityScore * 0.5)
     const stability = node.health?.stability_score ?? 0.8;
@@ -36,67 +156,116 @@ function NodeMesh({ node, isSelected, isSimulated, onClick, connectionCount, _ti
 
     const clamp = (val: number) => Math.max(-200, Math.min(200, val || 0));
 
+    // §6.4: hidden (region-filtered) nodes never intercept clicks meant for
+    // visible tissue behind them. Restore the prototype raycast when unhidden.
+    useEffect(() => {
+        const mesh = meshRef.current;
+        if (!mesh) return;
+        if (hidden) {
+            mesh.raycast = () => null;
+            setHovered(false);
+            document.body.style.cursor = 'auto';
+        } else {
+            delete mesh.raycast;
+        }
+    }, [hidden]);
+
+    // Reset cursor if this node unmounts while hovered
+    useEffect(() => {
+        return () => {
+            if (hovered) document.body.style.cursor = 'auto';
+        };
+    }, [hovered]);
+
     useFrame(() => {
-        if (!materialRef.current) return;
+        const mat = materialRef.current;
+        const mesh = meshRef.current;
 
-        let targetEmissive = isSimulated ? 0.8 : 0.8;
-        let currentEmissiveColor = new THREE.Color(color);
+        if (mat) {
+            // §6.4 emissive states: rest 0.55 / hover 0.9 / selected 1.3 / dormant 0.18
+            let targetIntensity = 0.55;
+            targetEmissiveColor.set(hex);
+            if (hovered) targetIntensity = 0.9;
+            if (isSelected) targetIntensity = 1.3;
+            if (node.status === 'dormant') targetIntensity = 0.18; // preserved tissue, not warning
 
-        if (isSimulated) {
-            if (isSimulated.impact_level === 'critical') currentEmissiveColor.set('#ff0000');
-            else if (isSimulated.impact_level === 'high') currentEmissiveColor.set('#ff8800');
-            else if (isSimulated.impact_level === 'moderate') currentEmissiveColor.set('#ffff00');
-            else if (isSimulated.impact_level === 'low') currentEmissiveColor.set('#ffffff');
-
-            targetEmissive = isSimulated.impact_level === 'critical' ? 2.5 :
-                isSimulated.impact_level === 'high' ? 2.0 :
-                    isSimulated.impact_level === 'moderate' ? 1.5 : 1.0;
-
-            if (simStartTime) {
-                const delayMs = isSimulated.distance_from_source * 150;
-                if (Date.now() - simStartTime < delayMs) {
-                    targetEmissive = 0.8; // Wait for the wave
-                    currentEmissiveColor.set(color);
+            // §6.4 simulation impact recolor — risk scale, 150ms-per-hop wave
+            if (isSimulated && node.status !== 'dormant') {
+                const delayMs = (isSimulated.distance_from_source || 0) * 150;
+                const arrived = !simStartTime || (Date.now() - simStartTime >= delayMs);
+                if (arrived) {
+                    const wave = SIM_WAVE[isSimulated.impact_level] || SIM_WAVE.low;
+                    targetEmissiveColor.set(wave.color);
+                    targetIntensity = wave.intensity;
                 }
             }
+
+            mat.emissive.lerp(targetEmissiveColor, 0.1);
+            mat.emissiveIntensity = THREE.MathUtils.lerp(mat.emissiveIntensity, targetIntensity, 0.1);
+
+            // §6.4 opacity: dormant 0.35; hidden region fades to 0.08 (~250ms lerp)
+            const targetOpacity = hidden ? 0.08 : node.status === 'dormant' ? 0.35 : 1.0;
+            mat.opacity = THREE.MathUtils.lerp(mat.opacity, targetOpacity, 0.1);
         }
 
-        if (node.status === 'dormant') {
-            targetEmissive = 0.4;
-            currentEmissiveColor.set(color);
+        if (mesh) {
+            // §6.5: selected node scales 1.15× (lerped) — never the 1.5× jump
+            const targetScale = isSelected ? 1.15 : 1.0;
+            mesh.scale.setScalar(THREE.MathUtils.lerp(mesh.scale.x, targetScale, 0.15));
         }
-
-        materialRef.current.emissive.lerp(currentEmissiveColor, 0.1);
-        materialRef.current.emissiveIntensity = THREE.MathUtils.lerp(materialRef.current.emissiveIntensity, targetEmissive, 0.1);
     });
 
     return (
         <group position={[clamp(node.x), clamp(node.y), clamp(node.z)]}>
-            <Sphere args={[isSelected ? size * 1.5 : size, 16, 16]} onClick={() => onClick(node)}>
+            <Sphere
+                ref={meshRef}
+                args={[size, isSelected ? 24 : 16, isSelected ? 24 : 16]}
+                onClick={() => onClick(node)}
+                onPointerOver={(e: any) => {
+                    e.stopPropagation();
+                    setHovered(true);
+                    document.body.style.cursor = 'pointer';
+                }}
+                onPointerOut={() => {
+                    setHovered(false);
+                    document.body.style.cursor = 'auto';
+                }}
+            >
                 <meshStandardMaterial
                     ref={materialRef}
-                    color={color}
-                    emissive={color}
+                    color={baseColor}
+                    emissive={hex}
                     emissiveIntensity={0}
-                    roughness={0.2}
-                    metalness={0.6}
+                    roughness={0.35}
+                    metalness={0.1}
                     toneMapped={false}
                     transparent={true}
-                    opacity={node.status === 'dormant' ? 0.3 : 1.0}
+                    opacity={node.status === 'dormant' ? 0.35 : 1.0}
                 />
             </Sphere>
-            {isSelected && (
-                <Html distanceFactor={15}>
-                    <div className="bg-black/80 text-white text-xs px-2 py-1 rounded border border-white/20 whitespace-nowrap pointer-events-none">
-                        {node.name}
-                    </div>
-                </Html>
+
+            {isSelected && !hidden && <SelectionReticle size={size} hex={hex} />}
+
+            {/* §6.8 low mode: selection glows via the shared halo sprite */}
+            {isSelected && !hidden && quality === 'low' && (
+                <sprite scale={[size * 4, size * 4, 1]} raycast={() => null}>
+                    <spriteMaterial
+                        map={getHaloTexture()}
+                        color={hex}
+                        blending={THREE.AdditiveBlending}
+                        transparent
+                        depthWrite={false}
+                        toneMapped={false}
+                    />
+                </sprite>
             )}
+
+            {isSelected && !hidden && <NodeTooltip node={node} hex={hex} />}
         </group>
     );
 }
 
-// ─── Synapse Line (§10.3) ────────────────────────────────────────────────────
+// ─── Synapse Line (§6.6) ─────────────────────────────────────────────────────
 const hexToRgb = (hex: string) => {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
     return result ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)] : [255, 255, 255];
@@ -108,16 +277,28 @@ const blendColors = (c1: string, c2: string) => {
     return `#${Math.round((r1 + r2) / 2).toString(16).padStart(2, '0')}${Math.round((g1 + g2) / 2).toString(16).padStart(2, '0')}${Math.round((b1 + b2) / 2).toString(16).padStart(2, '0')}`;
 };
 
-// Curved bezier line. Color = blended region colors. Thickness = strength.
-function SynapseLine({ source, target, strength, status, classification }: any) {
+const SLATE = new THREE.Color('#8B98A9');
+
+// Curved bezier line. Graphite circuitry with hue hints: resting color is the
+// source/target region blend mixed 35% toward slate; selecting a node lights
+// its circuit (unmixed blend @ 0.8) and dims everything else to 0.05.
+function SynapseLine({ source, target, strength, status, classification, hiddenRegions, selectedNodeId }: any) {
     const [sourcePos, setSourcePos] = useState<[number, number, number]>([-50, -50, -50]);
     const [targetPos, setTargetPos] = useState<[number, number, number]>([50, 50, 50]);
     const [ready, setReady] = useState(false);
+    const lineRef = useRef<any>(null);
 
-    // Color: Blend source and target region colors for cross-region synapses
-    const sourceColor = (typeof source === 'object' && source.region) ? (REGION_COLORS[source.region] || '#FFFFFF') : '#0066FF';
+    // Color: blend source and target region colors for cross-region synapses
+    const sourceColor = (typeof source === 'object' && source.region) ? (REGION_COLORS[source.region] || '#FFFFFF') : '#8B98A9';
     const targetColor = (typeof target === 'object' && target.region) ? (REGION_COLORS[target.region] || '#FFFFFF') : sourceColor;
-    const color = sourceColor === targetColor ? sourceColor : blendColors(sourceColor, targetColor);
+    const blendHex = sourceColor === targetColor ? sourceColor : blendColors(sourceColor, targetColor);
+
+    // §6.6: unmixed blend = circuit-tracing color; resting = mixed 35% toward slate
+    const colors = useMemo(() => {
+        const unmixed = new THREE.Color(blendHex);
+        const mixed = unmixed.clone().lerp(SLATE, 0.35);
+        return { unmixed, mixed, mixedHex: `#${mixed.getHexString()}` };
+    }, [blendHex]);
 
     // Static random offset for the bezier curve midpoint to prevent vibration
     const curveOffset = useMemo(() => [
@@ -126,11 +307,18 @@ function SynapseLine({ source, target, strength, status, classification }: any) 
         (Math.random() - 0.5) * 15,
     ], []);
 
-    // 3 Discrete Tiers for Synapse Strength: thin, medium, thick
-    let tierWidth = 0.15; // thin
-    if (classification === 'critical' || strength > 2.0) tierWidth = 0.6; // thick
-    else if (classification === 'high' || classification === 'moderate' || strength > 1.2) tierWidth = 0.3; // medium
+    // §6.6: 3 discrete width tiers — 0.10 / 0.22 / 0.45 (same tier logic, thinner)
+    let tierWidth = 0.10; // thin
+    if (classification === 'critical' || strength > 2.0) tierWidth = 0.45; // thick
+    else if (classification === 'high' || classification === 'moderate' || strength > 1.2) tierWidth = 0.22; // medium
     const lineWidth = tierWidth;
+
+    const isDormant = status === 'dormant' ||
+        (typeof source === 'object' && source.status === 'dormant') ||
+        (typeof target === 'object' && target.status === 'dormant');
+
+    // §6.6: base opacity = clamp(strength * 0.25, 0.10, 0.35); dormant 0.15
+    const baseOpacity = isDormant ? 0.15 : Math.max(0.10, Math.min(0.35, (strength || 0) * 0.25));
 
     const clamp = (val: number) => Math.max(-200, Math.min(200, val || 0));
 
@@ -146,6 +334,34 @@ function SynapseLine({ source, target, strength, status, classification }: any) 
                 if (!ready) setReady(true);
             }
         }
+
+        // §6.6 material mutation only — opacity/color lerp ~250ms, never a rebuild
+        const mat = lineRef.current?.material;
+        if (mat) {
+            const sObj = typeof source === 'object' ? source : null;
+            const tObj = typeof target === 'object' ? target : null;
+            const hidden =
+                !!(sObj && hiddenRegions.has(sObj.region)) ||
+                !!(tObj && hiddenRegions.has(tObj.region));
+            const touchesSelected = !!selectedNodeId &&
+                ((sObj && sObj.id === selectedNodeId) || (tObj && tObj.id === selectedNodeId));
+
+            let targetOpacity = baseOpacity;
+            let targetColor = colors.mixed;
+            if (selectedNodeId) {
+                // CIRCUIT TRACING: light the probe path, dim the rest
+                if (touchesSelected) {
+                    targetOpacity = 0.8;
+                    targetColor = colors.unmixed;
+                } else {
+                    targetOpacity = 0.05;
+                }
+            }
+            if (hidden) targetOpacity = 0.03; // region-filtered synapses
+
+            mat.opacity = THREE.MathUtils.lerp(mat.opacity, targetOpacity, 0.1);
+            mat.color.lerp(targetColor, 0.1);
+        }
     });
 
     if (!ready) return null;
@@ -157,30 +373,32 @@ function SynapseLine({ source, target, strength, status, classification }: any) 
         (sourcePos[2] + targetPos[2]) / 2 + curveOffset[2],
     ];
 
-    const isDormant = status === 'dormant' ||
-        (typeof source === 'object' && source.status === 'dormant') ||
-        (typeof target === 'object' && target.status === 'dormant');
-
     return (
         <QuadraticBezierLine
+            ref={lineRef}
             start={sourcePos}
             end={targetPos}
             mid={mid}
-            color={color}
+            color={colors.mixedHex}
             lineWidth={lineWidth}
             transparent
             dashed={isDormant}
             dashScale={isDormant ? 20 : 0}
             dashSize={isDormant ? 2 : 0}
             gapSize={isDormant ? 1 : 0}
-            opacity={isDormant ? 0.4 : Math.max(0.15, Math.min(0.8, strength || 0.4))}
+            opacity={baseOpacity}
         />
     );
 }
 
 // ─── Graph Simulation (§9) ───────────────────────────────────────────────────
-function GraphSimulation({ plexus }: any) {
+function GraphSimulation({ plexus, quality }: any) {
     const [ticks, setTicks] = useState(0);
+
+    // §5.7/§6.4: hiddenRegions consumed defensively — material mutations only,
+    // NEVER a graph rebuild (deliberately NOT a dep of the layout memo below).
+    const hiddenRegions: Set<string> = plexus.hiddenRegions ?? EMPTY_SET;
+    const selectedNodeId = plexus.selectedNode?.id ?? null;
 
     // Build connection count lookup
     const connectionCounts = useMemo(() => {
@@ -338,7 +556,7 @@ function GraphSimulation({ plexus }: any) {
         // searchQuery deliberately NOT a dep: typing must never rebuild the force layout
     }, [plexus.data, plexus.showDormant]);
 
-    // Force React to re-render as D3 calculates physics
+    // Force React to re-render as D3 calculates physics — only while settling (§6.10)
     useFrame(() => {
         if (graph.simulation && graph.simulation.alpha() > 0.01) {
             setTicks(t => t + 1);
@@ -366,7 +584,16 @@ function GraphSimulation({ plexus }: any) {
     return (
         <group>
             {(graph?.links || []).map((link: any, i: number) => (
-                <SynapseLine key={i} source={link.source} target={link.target} strength={link.strength} status={link.status} classification={link.classification} />
+                <SynapseLine
+                    key={i}
+                    source={link.source}
+                    target={link.target}
+                    strength={link.strength}
+                    status={link.status}
+                    classification={link.classification}
+                    hiddenRegions={hiddenRegions}
+                    selectedNodeId={selectedNodeId}
+                />
             ))}
             {(graph?.nodes || []).map((node: any) => (
                 <NodeMesh
@@ -377,6 +604,8 @@ function GraphSimulation({ plexus }: any) {
                     simStartTime={plexus.simulationTimestamp}
                     onClick={(n: any) => plexus.setSelectedNode(n)}
                     connectionCount={connectionCounts[node.id] || 0}
+                    hidden={hiddenRegions.has(node.region)}
+                    quality={quality}
                     _tick={ticks}
                 />
             ))}
@@ -385,7 +614,7 @@ function GraphSimulation({ plexus }: any) {
 }
 
 // ─── Camera Controller ───────────────────────────────────────────────────────
-function CameraController({ plexus }: any) {
+function CameraController({ plexus, recenterRef }: any) {
     const { controls } = useThree();
 
     useFrame(() => {
@@ -419,51 +648,185 @@ function CameraController({ plexus }: any) {
 
         if (hasTarget) {
             const vTarget = new THREE.Vector3(targetX, targetY, targetZ);
-            // @ts-ignore
+            // @ts-ignore — keep the 0.05 target lerp (§6.9)
             controls.target.lerp(vTarget, 0.05);
+            if (recenterRef?.current) recenterRef.current.active = false;
+        } else if (recenterRef?.current?.active) {
+            // §6.9: double-click empty space → ease target back to origin (~600ms)
+            const rc = recenterRef.current;
+            // @ts-ignore
+            if (!rc.from) rc.from = controls.target.clone();
+            if (REDUCED_MOTION) {
+                // @ts-ignore
+                controls.target.copy(ORIGIN);
+                rc.active = false;
+                return;
+            }
+            const t = Math.min(1, (performance.now() - rc.start) / 600);
+            const eased = 1 - Math.pow(1 - t, 3); // ease-out
+            // @ts-ignore
+            controls.target.lerpVectors(rc.from, ORIGIN, eased);
+            if (t >= 1) rc.active = false;
         }
     });
     return null;
 }
 
-// ─── Main Export (§10.1) ─────────────────────────────────────────────────────
-export default function NetworkGraph({ plexus }: any) {
+// ─── One-time arrival shot (§6.9) ────────────────────────────────────────────
+// On first data load, ease the camera from [120, 60, 180] to [80, 40, 120]
+// over ~1.2s (ease-out). Skipped under prefers-reduced-motion; never replays
+// on Canvas remounts (context-restore key bumps).
+let arrivalPlayed = false;
+const ARRIVAL_FROM = new THREE.Vector3(120, 60, 180);
+const ARRIVAL_TO = new THREE.Vector3(80, 40, 120);
+
+function ArrivalShot() {
+    const { camera } = useThree();
+    const stateRef = useRef<{ start: number; done: boolean } | null>(null);
+
+    useLayoutEffect(() => {
+        if (arrivalPlayed || REDUCED_MOTION) {
+            arrivalPlayed = true;
+            return;
+        }
+        arrivalPlayed = true;
+        camera.position.copy(ARRIVAL_FROM);
+        stateRef.current = { start: performance.now(), done: false };
+    }, [camera]);
+
+    useFrame(() => {
+        const s = stateRef.current;
+        if (!s || s.done) return;
+        const t = Math.min(1, (performance.now() - s.start) / 1200);
+        const eased = 1 - Math.pow(1 - t, 3); // ease-out
+        camera.position.lerpVectors(ARRIVAL_FROM, ARRIVAL_TO, eased);
+        if (t >= 1) s.done = true;
+    });
+
+    return null;
+}
+
+// ─── Deferred bloom (§6.7) ───────────────────────────────────────────────────
+// Threshold-gated: with toneMapped:false emissives, only emissiveIntensity
+// > 1.0 crosses — the selected node (1.3) and the simulation wave (1.4–2.2).
+// Mounted only after ~60 rendered frames AND when node count < 800, so bloom
+// framebuffer allocation never stacks on top of d3-force settling.
+function DeferredBloom({ nodeCount }: any) {
+    const [armed, setArmed] = useState(false);
+    const frames = useRef(0);
+
+    useFrame(() => {
+        if (!armed) {
+            frames.current += 1;
+            if (frames.current >= 60) setArmed(true);
+        }
+    });
+
+    if (!armed || nodeCount >= 800) return null;
+
     return (
-        <Suspense fallback={<div className="text-white w-full h-full flex items-center justify-center">Loading Engine...</div>}>
-            <Canvas
-                camera={{ position: [80, 40, 120], fov: 55 }}
-                style={{ width: '100%', height: '100%' }}
-                gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.2 }}
+        <EffectComposer multisampling={0} disableNormalPass>
+            <Bloom mipmapBlur intensity={0.6} luminanceThreshold={1.0} luminanceSmoothing={0.2} />
+        </EffectComposer>
+    );
+}
+
+// ─── Main Export (§6) ────────────────────────────────────────────────────────
+export default function NetworkGraph({ plexus }: any) {
+    const nodeCount = plexus?.data?.nodes?.length || 0;
+    const { quality, setQuality, demoteForStability, canvasKey, bumpCanvasKey, toast } = useQuality(nodeCount);
+
+    // Double-click-empty-space recenter request, consumed by CameraController
+    const recenterRef = useRef<{ active: boolean; start: number; from: THREE.Vector3 | null }>({
+        active: false,
+        start: 0,
+        from: null,
+    });
+
+    return (
+        <div className="relative h-full w-full">
+            <Suspense
+                fallback={
+                    <div className="flex h-full w-full items-center justify-center bg-ink-0">
+                        <span className="font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-text-lo">
+                            INITIALIZING RENDERER…
+                        </span>
+                    </div>
+                }
             >
-                <color attach="background" args={['#0A0A0F']} />
+                <Canvas
+                    key={canvasKey}
+                    camera={{ position: [80, 40, 120], fov: 50 }}
+                    style={{ width: '100%', height: '100%' }}
+                    dpr={quality === 'high' ? [1, 1.75] : [1, 1.5]}
+                    gl={{
+                        // §6.7: MSAA is wasted under a composer (high mode); low mode keeps it
+                        antialias: quality === 'low',
+                        toneMapping: THREE.ACESFilmicToneMapping,
+                        toneMappingExposure: 1.1,
+                    }}
+                    onCreated={({ gl }: any) => {
+                        // §6.8: context-loss latch — demote + persist + toast; remount on restore
+                        gl.domElement.addEventListener('webglcontextlost', (e: Event) => {
+                            e.preventDefault();
+                            demoteForStability();
+                        });
+                        gl.domElement.addEventListener('webglcontextrestored', () => {
+                            bumpCanvasKey();
+                        });
+                    }}
+                    onPointerMissed={(e: any) => {
+                        // §6.9: double-click empty space → recenter orbit target on origin
+                        if (e.detail === 2) {
+                            recenterRef.current = { active: true, start: performance.now(), from: null };
+                        }
+                    }}
+                >
+                    {/* §6.1: one step below UI ink-1 so panels float above the void */}
+                    <color attach="background" args={['#08090B']} />
+                    {/* §6.2: near plane past the specimen; far nodes recede into graphite */}
+                    <fog attach="fog" args={['#08090B', 160, 420]} />
 
-                {/* §10.1: Star-field background (TEMPORARILY DISABLED due to WebGL Context Loss check) */}
-                {/* <Stars radius={300} depth={80} count={3000} factor={4} saturation={0} fade speed={1} /> */}
-
-                {/* Lighting */}
-                <ambientLight intensity={0.3} />
-                <pointLight position={[100, 100, 100]} intensity={1.5} color="#ffffff" />
-                <pointLight position={[-100, -50, -100]} intensity={0.8} color="#4444ff" />
-
-                {/* Graph */}
-                <GraphSimulation plexus={plexus} />
-
-                {/* Camera controls for manual 3D depth showcase */}
-                <OrbitControls makeDefault enableDamping dampingFactor={0.05} />
-                <CameraController plexus={plexus} />
-
-                {/* §10.1: Bloom post-processing for glow effects (TEMPORARILY DISABLED due to WebGL Context Loss) */}
-                {/* 
-                <EffectComposer>
-                    <Bloom
-                        luminanceThreshold={0.2}
-                        luminanceSmoothing={0.9}
-                        intensity={1.5}
-                        mipmapBlur
+                    {/* §6.1: specimen stage — a faint polar bench the brain hovers over */}
+                    <Grid
+                        position={[0, -95, 0]}
+                        args={[400, 400]}
+                        cellSize={10}
+                        cellColor="#101114"
+                        sectionSize={50}
+                        sectionColor="#16181C"
+                        fadeDistance={320}
+                        fadeStrength={2}
+                        infiniteGrid
                     />
-                </EffectComposer> 
-                */}
-            </Canvas>
-        </Suspense>
+
+                    {/* §6.3: strictly monochrome rig — color comes ONLY from emissive region hexes */}
+                    <ambientLight intensity={0.25} color="#FFFFFF" />
+                    <directionalLight position={[80, 120, 80]} intensity={1.1} color="#F2F4F8" /> {/* key */}
+                    <pointLight position={[-120, -40, -120]} intensity={0.5} color="#AEB6C2" /> {/* rim */}
+                    <pointLight position={[0, -80, 40]} intensity={0.25} color="#FFFFFF" /> {/* low fill */}
+
+                    {/* Graph */}
+                    <GraphSimulation plexus={plexus} quality={quality} />
+
+                    {/* §6.9: damped orbit clamped inside the fog envelope */}
+                    <OrbitControls makeDefault enableDamping dampingFactor={0.08} minDistance={40} maxDistance={380} />
+                    <CameraController plexus={plexus} recenterRef={recenterRef} />
+                    <ArrivalShot />
+
+                    {/* §6.7/§6.8: bloom only in high quality, deferred; demote on decline */}
+                    <PerformanceMonitor onDecline={() => setQuality('low')}>
+                        {quality === 'high' && <DeferredBloom nodeCount={nodeCount} />}
+                    </PerformanceMonitor>
+                </Canvas>
+            </Suspense>
+
+            {/* §6.8: stability toast — bottom-left, 4s */}
+            {toast && (
+                <div className="instrument-panel pointer-events-none absolute bottom-4 left-4 px-3 py-2 font-mono text-[11px] font-medium uppercase tracking-[0.06em] text-text-mid">
+                    RENDER QUALITY REDUCED FOR STABILITY
+                </div>
+            )}
+        </div>
     );
 }

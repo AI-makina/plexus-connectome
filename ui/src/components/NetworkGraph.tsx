@@ -5,18 +5,8 @@ import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import { forceSimulation, forceLink, forceManyBody, forceCenter } from 'd3-force-3d';
 import * as THREE from 'three';
 
-// ─── Region Colors (§3) ─────────────────────────────────────────────────────
-const REGION_COLORS: Record<string, string> = {
-    frontal_lobe: '#0066FF',
-    temporal_lobe: '#FFB800',
-    occipital_lobe: '#FF00AA',
-    parietal_lobe: '#00CC66',
-    cerebellum: '#8800FF',
-    brain_stem: '#8899AA',
-    limbic_system: '#FF6B4A',
-    amygdala: '#FF0033',
-    corpus_callosum: '#FFFFFF'
-};
+// ─── Region Colors (§3) — single source of truth in theme/regions.js ────────
+import { REGION_COLORS } from '../theme/regions';
 
 // ─── Region Spatial Positions & Radii (§3.10) ────────────────────────────────
 // Real anatomical coordinates forming a lateral-view human brain shape

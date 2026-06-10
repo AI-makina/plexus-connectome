@@ -1,17 +1,6 @@
 import React from 'react';
 import { Search, Info, Activity, AlertTriangle, Play, Eye, EyeOff } from 'lucide-react';
-
-const REGION_COLORS: Record<string, string> = {
-    frontal_lobe: '#0066FF',
-    temporal_lobe: '#FFB800',
-    occipital_lobe: '#FF00AA',
-    parietal_lobe: '#00CC66',
-    cerebellum: '#8800FF',
-    brain_stem: '#8899AA',
-    limbic_system: '#FF6B4A',
-    amygdala: '#FF0033',
-    corpus_callosum: '#FFFFFF'
-};
+import { REGION_COLORS } from '../theme/regions';
 
 export default function UIOverlay({ plexus }: any) {
     const { selectedNode, simulationResult, runSimulation } = plexus;

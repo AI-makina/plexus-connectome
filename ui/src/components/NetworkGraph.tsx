@@ -335,7 +335,8 @@ function GraphSimulation({ plexus }: any) {
         });
 
         return { nodes, links, simulation };
-    }, [plexus.data, plexus.searchQuery, plexus.showDormant]);
+        // searchQuery deliberately NOT a dep: typing must never rebuild the force layout
+    }, [plexus.data, plexus.showDormant]);
 
     // Force React to re-render as D3 calculates physics
     useFrame(() => {

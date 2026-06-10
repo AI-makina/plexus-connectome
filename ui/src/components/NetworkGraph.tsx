@@ -20,21 +20,12 @@ const REDUCED_MOTION =
 const EMPTY_SET = new Set<string>();
 const ORIGIN = new THREE.Vector3(0, 0, 0);
 
-// ─── Region Spatial Positions & Radii (§3.10) ────────────────────────────────
-// Real anatomical coordinates forming a lateral-view human brain shape
-// Coordinate system: X=left/right, Y=up/down, Z=front/back
-// §6.2: if this scale ever changes, retune fog [160, 420] and grid y=-95 too.
-const REGION_BOUNDS: Record<string, { x: number; y: number; z: number; rx: number; ry: number; rz: number }> = {
-    frontal_lobe: { x: 0, y: 30, z: 50, rx: 35, ry: 40, rz: 40 }, // Front-top
-    parietal_lobe: { x: 0, y: 50, z: 0, rx: 35, ry: 30, rz: 35 }, // Top-center/back
-    occipital_lobe: { x: 0, y: 10, z: -50, rx: 30, ry: 35, rz: 30 }, // Back
-    temporal_lobe: { x: 0, y: -10, z: 0, rx: 45, ry: 25, rz: 35 }, // Sides
-    cerebellum: { x: 0, y: -40, z: -40, rx: 25, ry: 20, rz: 20 }, // Bottom-back
-    brain_stem: { x: 0, y: -60, z: -10, rx: 10, ry: 20, rz: 10 }, // Bottom-center
-    limbic_system: { x: 0, y: 0, z: 0, rx: 20, ry: 15, rz: 20 }, // Center
-    amygdala: { x: 0, y: -15, z: 10, rx: 10, ry: 10, rz: 10 }, // Center-forward
-    corpus_callosum: { x: 0, y: 20, z: 10, rx: 15, ry: 10, rz: 25 }  // Center-top
-};
+// ─── The invisible brain (anatomy in theme/brainAnatomy.js) ──────────────────
+// Nodes are sampled inside per-region 3D cavity volumes whose union forms a
+// lateral-view brain; filler tissue (Fillers.tsx) completes the silhouette.
+// §6.2: if the anatomy scale ever changes, retune fog [160, 420] and grid y.
+import { samplePointInRegion } from '../theme/brainAnatomy';
+import Fillers from './Fillers';
 
 // ─── Low-mode selection halo (§6.8) ──────────────────────────────────────────
 // One shared pre-baked 128px radial-gradient CanvasTexture; tinted via the
@@ -139,20 +130,22 @@ function NodeTooltip({ node, hex }: any) {
 // Matte instrument sphere. Size scales with connection count. Color = region
 // hex darkened 40%; emissive = region hex. Glow is earned (selection 1.3,
 // simulation wave 1.4–2.2) — the resting scene stays under bloom threshold.
-function NodeMesh({ node, isSelected, isSimulated, onClick, connectionCount, _tick, simStartTime, hidden, quality }: any) {
+function NodeMesh({ node, isSelected, isSimulated, onClick, connectionCount, maxDegree, _tick, simStartTime, hidden, quality }: any) {
     const hex = REGION_COLORS[node.region] || '#FFFFFF';
     const materialRef = useRef<any>(null);
     const meshRef = useRef<any>(null);
     const [hovered, setHovered] = useState(false);
 
-    // §6.4: color = region hex darkened 40%
-    const baseColor = useMemo(() => new THREE.Color(hex).multiplyScalar(0.6), [hex]);
+    // Degree ramp: the more synapses, the bigger AND brighter the neuron.
+    // Log-normalized so hubs don't flatten everything else to zero.
+    const degree = Math.log(1 + (connectionCount || 0)) / Math.log(1 + Math.max(1, maxDegree || 1));
+
+    // Color luminance rises with degree: dim periphery → bright hubs
+    const baseColor = useMemo(() => new THREE.Color(hex).multiplyScalar(0.45 + 0.4 * degree), [hex, degree]);
     const targetEmissiveColor = useMemo(() => new THREE.Color(hex), [hex]);
 
-    // §10.2: size = baseSize + (connectionCount * 0.3) + (stabilityScore * 0.5)
-    const stability = node.health?.stability_score ?? 0.8;
-    const baseSize = 0.6;
-    const size = Math.min(3.5, Math.max(0.4, baseSize + (connectionCount * 0.15) + (stability * 0.3)));
+    // Size: degree-dominant (0.55 leaf → 4.0 hub)
+    const size = Math.min(4.0, 0.55 + 3.4 * Math.pow(degree, 1.25));
 
     const clamp = (val: number) => Math.max(-200, Math.min(200, val || 0));
 
@@ -182,11 +175,13 @@ function NodeMesh({ node, isSelected, isSimulated, onClick, connectionCount, _ti
         const mesh = meshRef.current;
 
         if (mat) {
-            // §6.4 emissive states: rest 0.55 / hover 0.9 / selected 1.3 / dormant 0.18
-            let targetIntensity = 0.55;
+            // Degree-luminous emissive: leaf 0.35 → hub 1.8 (hubs cross the bloom
+            // threshold at rest and glow — the reference-image look). Selection
+            // outshines everything; dormant stays preserved tissue, not warning.
+            let targetIntensity = 0.5 + 1.35 * degree;
             targetEmissiveColor.set(hex);
-            if (hovered) targetIntensity = 0.9;
-            if (isSelected) targetIntensity = 1.3;
+            if (hovered) targetIntensity = Math.max(1.0, targetIntensity + 0.35);
+            if (isSelected) targetIntensity = 2.2;
             if (node.status === 'dormant') targetIntensity = 0.18; // preserved tissue, not warning
 
             // §6.4 simulation impact recolor — risk scale, 150ms-per-hop wave
@@ -293,11 +288,13 @@ function SynapseLine({ source, target, strength, status, classification, hiddenR
     const targetColor = (typeof target === 'object' && target.region) ? (REGION_COLORS[target.region] || '#FFFFFF') : sourceColor;
     const blendHex = sourceColor === targetColor ? sourceColor : blendColors(sourceColor, targetColor);
 
-    // §6.6: unmixed blend = circuit-tracing color; resting = mixed 35% toward slate
+    // Reference-luminous web: resting lines keep nearly full region color (only
+    // 12% slate); circuit tracing pushes color past 1.0 so probed paths bloom.
     const colors = useMemo(() => {
         const unmixed = new THREE.Color(blendHex);
-        const mixed = unmixed.clone().lerp(SLATE, 0.35);
-        return { unmixed, mixed, mixedHex: `#${mixed.getHexString()}` };
+        const mixed = unmixed.clone().lerp(SLATE, 0.08);
+        const circuit = unmixed.clone().multiplyScalar(1.6);
+        return { unmixed, mixed, circuit, mixedHex: `#${mixed.getHexString()}` };
     }, [blendHex]);
 
     // Static random offset for the bezier curve midpoint to prevent vibration
@@ -307,18 +304,18 @@ function SynapseLine({ source, target, strength, status, classification, hiddenR
         (Math.random() - 0.5) * 15,
     ], []);
 
-    // §6.6: 3 discrete width tiers — 0.10 / 0.22 / 0.45 (same tier logic, thinner)
-    let tierWidth = 0.10; // thin
-    if (classification === 'critical' || strength > 2.0) tierWidth = 0.45; // thick
-    else if (classification === 'high' || classification === 'moderate' || strength > 1.2) tierWidth = 0.22; // medium
+    // 3 discrete width tiers — 0.12 / 0.30 / 0.60
+    let tierWidth = 0.12; // thin
+    if (classification === 'critical' || strength > 2.0) tierWidth = 0.60; // thick
+    else if (classification === 'high' || classification === 'moderate' || strength > 1.2) tierWidth = 0.30; // medium
     const lineWidth = tierWidth;
 
     const isDormant = status === 'dormant' ||
         (typeof source === 'object' && source.status === 'dormant') ||
         (typeof target === 'object' && target.status === 'dormant');
 
-    // §6.6: base opacity = clamp(strength * 0.25, 0.10, 0.35); dormant 0.15
-    const baseOpacity = isDormant ? 0.15 : Math.max(0.10, Math.min(0.35, (strength || 0) * 0.25));
+    // Luminous web: base opacity = clamp(0.18 + strength * 0.22, 0.18, 0.55); dormant 0.15
+    const baseOpacity = isDormant ? 0.15 : Math.max(0.18, Math.min(0.55, 0.18 + (strength || 0) * 0.22));
 
     const clamp = (val: number) => Math.max(-200, Math.min(200, val || 0));
 
@@ -349,10 +346,10 @@ function SynapseLine({ source, target, strength, status, classification, hiddenR
             let targetOpacity = baseOpacity;
             let targetColor = colors.mixed;
             if (selectedNodeId) {
-                // CIRCUIT TRACING: light the probe path, dim the rest
+                // CIRCUIT TRACING: light the probe path (bloom-hot), dim the rest
                 if (touchesSelected) {
-                    targetOpacity = 0.8;
-                    targetColor = colors.unmixed;
+                    targetOpacity = 0.85;
+                    targetColor = colors.circuit;
                 } else {
                     targetOpacity = 0.05;
                 }
@@ -412,6 +409,13 @@ function GraphSimulation({ plexus, quality }: any) {
         return counts;
     }, [plexus.data.synapses]);
 
+    // Degree ceiling for the size/brightness ramps
+    const maxDegree = useMemo(() => {
+        let max = 1;
+        for (const k in connectionCounts) if (connectionCounts[k] > max) max = connectionCounts[k];
+        return max;
+    }, [connectionCounts]);
+
     // Compute 3D physics structure
     const graph = useMemo(() => {
         if (!plexus?.data?.nodes || !Array.isArray(plexus.data.nodes)) {
@@ -451,24 +455,17 @@ function GraphSimulation({ plexus, quality }: any) {
         };
 
         const nodes = allNodes.map((n: any, i: number) => {
-            // Seed initial positions inside their designated anatomical ellipsoid volume
-            const bounds = REGION_BOUNDS[n.region] || { x: 0, y: 0, z: 0, rx: 20, ry: 20, rz: 20 };
-
-            // Deterministic random using node ID, preventing nodes diving to new random anchors on every React state switch
+            // Seed initial positions inside the region's anatomical cavity volume.
+            // Deterministic random using node ID, preventing nodes diving to new
+            // random anchors on every React state switch.
             const seed = getHash(n.id);
             const r1 = getSeededRandom(seed);
             const r2 = getSeededRandom(seed + 1);
             const r3 = getSeededRandom(seed + 2);
-
-            // Uniform point-in-ellipsoid distribution math
-            const theta = r1 * Math.PI * 2;
-            const phi = Math.acos(2 * r2 - 1);
-            const r = Math.cbrt(r3);
+            const r4 = getSeededRandom(seed + 3);
 
             // Lock the node to an unbreakable personal 3D anchor so the gravity doesn't collapse the X/Y/Z width
-            const targetX = bounds.x + bounds.rx * r * Math.sin(phi) * Math.cos(theta);
-            const targetY = bounds.y + bounds.ry * r * Math.sin(phi) * Math.sin(theta);
-            const targetZ = bounds.z + bounds.rz * r * Math.cos(phi);
+            const [targetX, targetY, targetZ] = samplePointInRegion(n.region, r1, r2, r3, r4);
 
             return {
                 ...n,
@@ -529,22 +526,22 @@ function GraphSimulation({ plexus, quality }: any) {
             }
         }
 
-        // §9.2: Force-directed layout tuned for strict boundary preservation
+        // §9.2: Force-directed layout tuned for strict cavity containment —
+        // repulsion must never shove tissue outside the invisible brain.
         const simulation = forceSimulation(nodes || [], 3)
-            .velocityDecay(0.65) // Higher friction (0.65) to lock nodes quickly
-            .force("link", forceLink(links || []).id((d: any) => d.id).distance(15).strength((link: any) => {
+            .velocityDecay(0.7) // High friction to lock nodes quickly
+            .force("link", forceLink(links || []).id((d: any) => d.id).distance(12).strength((link: any) => {
                 // Prevent cross-region links from dragging nodes into other lobes
-                return link.source.region === link.target.region ? 0.3 : 0.005;
+                return link.source.region === link.target.region ? 0.25 : 0.004;
             }))
-            .force("charge", forceManyBody().strength(-15)) // Reduced repulsion
+            .force("charge", forceManyBody().strength(-5).distanceMax(18)) // local spacing only
 
-        // §9.1: Personal anchor gravity — pull nodes toward their assigned boundaries
+        // §9.1: Personal anchor gravity — the anchor IS the anatomy; it wins.
         simulation.force("regionGravity", () => {
             const alpha = simulation.alpha();
             nodes.forEach((d: any) => {
                 if (d.targetX !== undefined) {
-                    // Stronger pull to anchor coordinates to prevent boundary invasion
-                    const pullStrength = d.region === 'amygdala' ? 0.8 : 0.4;
+                    const pullStrength = d.region === 'amygdala' ? 0.9 : 0.65;
                     d.vx += (d.targetX - d.x) * alpha * pullStrength;
                     d.vy += (d.targetY - d.y) * alpha * pullStrength;
                     d.vz += (d.targetZ - d.z) * alpha * pullStrength;
@@ -583,6 +580,9 @@ function GraphSimulation({ plexus, quality }: any) {
 
     return (
         <group>
+            {/* Decorative tissue filling the invisible brain cavities */}
+            <Fillers hiddenRegions={hiddenRegions} dimmed={!!selectedNodeId} />
+
             {(graph?.links || []).map((link: any, i: number) => (
                 <SynapseLine
                     key={i}
@@ -604,6 +604,7 @@ function GraphSimulation({ plexus, quality }: any) {
                     simStartTime={plexus.simulationTimestamp}
                     onClick={(n: any) => plexus.setSelectedNode(n)}
                     connectionCount={connectionCounts[node.id] || 0}
+                    maxDegree={maxDegree}
                     hidden={hiddenRegions.has(node.region)}
                     quality={quality}
                     _tick={ticks}
@@ -673,12 +674,12 @@ function CameraController({ plexus, recenterRef }: any) {
 }
 
 // ─── One-time arrival shot (§6.9) ────────────────────────────────────────────
-// On first data load, ease the camera from [120, 60, 180] to [80, 40, 120]
-// over ~1.2s (ease-out). Skipped under prefers-reduced-motion; never replays
-// on Canvas remounts (context-restore key bumps).
+// Settles on the LATERAL view so the brain silhouette (anterior pointing
+// right) is the first thing the user reads, like the reference plate.
+// Skipped under prefers-reduced-motion; never replays on Canvas remounts.
 let arrivalPlayed = false;
-const ARRIVAL_FROM = new THREE.Vector3(120, 60, 180);
-const ARRIVAL_TO = new THREE.Vector3(80, 40, 120);
+const ARRIVAL_FROM = new THREE.Vector3(-222, 52, 44);
+const ARRIVAL_TO = new THREE.Vector3(-160, 12, 6);
 
 function ArrivalShot() {
     const { camera } = useThree();
@@ -726,7 +727,7 @@ function DeferredBloom({ nodeCount }: any) {
 
     return (
         <EffectComposer multisampling={0} disableNormalPass>
-            <Bloom mipmapBlur intensity={0.6} luminanceThreshold={1.0} luminanceSmoothing={0.2} />
+            <Bloom mipmapBlur intensity={1.05} luminanceThreshold={0.85} luminanceSmoothing={0.3} />
         </EffectComposer>
     );
 }
@@ -756,7 +757,7 @@ export default function NetworkGraph({ plexus }: any) {
             >
                 <Canvas
                     key={canvasKey}
-                    camera={{ position: [80, 40, 120], fov: 50 }}
+                    camera={{ position: [-160, 12, 6], fov: 50 }}
                     style={{ width: '100%', height: '100%' }}
                     dpr={quality === 'high' ? [1, 1.75] : [1, 1.5]}
                     gl={{

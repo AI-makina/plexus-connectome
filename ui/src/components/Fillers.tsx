@@ -13,6 +13,21 @@ import { buildRegionFiller } from '../theme/brainAnatomy';
 const BASE_PARTICLE_OPACITY = 0.74;
 const BASE_FILAMENT_OPACITY = 0.26;
 
+// Same reduced-motion gate NetworkGraph uses — no tissue shimmer under it
+const REDUCED_MOTION =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// Deterministic per-region shimmer phase, spread over 0..2π
+const hashPhase = (str: string) => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = Math.imul(31, hash) + str.charCodeAt(i) | 0;
+    }
+    return ((hash >>> 0) % 6283) / 1000;
+};
+
 function RegionFiller({ regionKey, hex, hidden, dimmed }: any) {
     const data = useMemo(() => buildRegionFiller(regionKey), [regionKey]);
     const meshRef = useRef<any>(null);
@@ -46,9 +61,21 @@ function RegionFiller({ regionKey, hex, hidden, dimmed }: any) {
         return g;
     }, [data]);
 
-    useFrame(() => {
-        const pTarget = hidden ? 0 : BASE_PARTICLE_OPACITY * (dimmed ? 0.3 : 1);
-        const fTarget = hidden ? 0 : BASE_FILAMENT_OPACITY * (dimmed ? 0.3 : 1);
+    const regionPhase = useMemo(() => hashPhase(regionKey), [regionKey]);
+
+    useFrame((state) => {
+        let pTarget = hidden ? 0 : BASE_PARTICLE_OPACITY * (dimmed ? 0.3 : 1);
+        let fTarget = hidden ? 0 : BASE_FILAMENT_OPACITY * (dimmed ? 0.3 : 1);
+
+        // Living tissue: slow shimmer composed onto the target BEFORE the lerp
+        // so hidden/dimmed transitions stay intact. Filaments run the same
+        // rhythm slightly behind the particles.
+        if (!REDUCED_MOTION && !hidden) {
+            const e = state.clock.elapsedTime;
+            pTarget *= 1 + 0.15 * Math.sin(e * 0.35 + regionPhase);
+            fTarget *= 1 + 0.20 * Math.sin(e * 0.35 + regionPhase - 0.7);
+        }
+
         if (particleMatRef.current) {
             particleMatRef.current.opacity = THREE.MathUtils.lerp(particleMatRef.current.opacity, pTarget, 0.1);
         }

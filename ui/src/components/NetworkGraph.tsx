@@ -20,6 +20,38 @@ const REDUCED_MOTION =
 const EMPTY_SET = new Set<string>();
 const ORIGIN = new THREE.Vector3(0, 0, 0);
 
+// ─── Deterministic hash + seeded random (layout anchors, curve offsets, ──────
+// breathing phases, impulse spawns). Module scope so every subsystem derives
+// identical values from identical ids.
+const getHash = (str: string) => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        hash = Math.imul(31, hash) + str.charCodeAt(i) | 0;
+    }
+    return hash;
+};
+
+const getSeededRandom = (seed: number) => {
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+};
+
+// ─── Neural activity (§ impulses) shared state ───────────────────────────────
+// nodeId → performance.now() timestamp of the last impulse arrival; NodeMesh
+// reads it per frame and adds a decaying emissive flicker. Entries are lazily
+// deleted once older than ~1.5s (plus a periodic sweep in Impulses).
+const ARRIVAL_FLASH = new Map<string, number>();
+
+const ZERO_OFFSET = [0, 0, 0];
+const clampCoord = (v: number) => Math.max(-200, Math.min(200, v || 0));
+
+// Preallocated scratch — zero allocations in the impulse hot loop
+const IMPULSE_MAT = new THREE.Matrix4();
+const IMPULSE_COL_A = new THREE.Color();
+const IMPULSE_COL_B = new THREE.Color();
+
 // ─── The invisible brain (anatomy in theme/brainAnatomy.js) ──────────────────
 // Nodes are sampled inside per-region 3D cavity volumes whose union forms a
 // lateral-view brain; filler tissue (Fillers.tsx) completes the silhouette.
@@ -147,6 +179,9 @@ function NodeMesh({ node, isSelected, isSimulated, onClick, connectionCount, max
     // Size: degree-dominant (0.55 leaf → 4.0 hub)
     const size = Math.min(4.0, 0.55 + 3.4 * Math.pow(degree, 1.25));
 
+    // Breathing phase: deterministic from the node id hash, spread over 0..2π
+    const breathPhase = useMemo(() => ((getHash(String(node.id)) >>> 0) % 6283) / 1000, [node.id]);
+
     const clamp = (val: number) => Math.max(-200, Math.min(200, val || 0));
 
     // §6.4: hidden (region-filtered) nodes never intercept clicks meant for
@@ -170,7 +205,7 @@ function NodeMesh({ node, isSelected, isSimulated, onClick, connectionCount, max
         };
     }, [hovered]);
 
-    useFrame(() => {
+    useFrame((state) => {
         const mat = materialRef.current;
         const mesh = meshRef.current;
 
@@ -180,6 +215,16 @@ function NodeMesh({ node, isSelected, isSimulated, onClick, connectionCount, max
             // outshines everything; dormant stays preserved tissue, not warning.
             let targetIntensity = 0.5 + 1.35 * degree;
             targetEmissiveColor.set(hex);
+
+            // Living tissue: resting neurons breathe — hubs slower and heavier,
+            // leaves faster and lighter. Never while selected, dormant, or mid
+            // simulation wave; applied to the target BEFORE the 0.1 lerp.
+            if (!REDUCED_MOTION && !isSelected && !isSimulated && node.status !== 'dormant') {
+                const breathSpeed = 1.0 - 0.45 * degree;
+                const breathAmp = 0.10 * (1 + 0.6 * degree);
+                targetIntensity *= 1 + breathAmp * Math.sin(state.clock.elapsedTime * breathSpeed + breathPhase);
+            }
+
             if (hovered) targetIntensity = Math.max(1.0, targetIntensity + 0.35);
             if (isSelected) targetIntensity = 2.2;
             if (node.status === 'dormant') targetIntensity = 0.18; // preserved tissue, not warning
@@ -192,6 +237,18 @@ function NodeMesh({ node, isSelected, isSimulated, onClick, connectionCount, max
                     const wave = SIM_WAVE[isSimulated.impact_level] || SIM_WAVE.low;
                     targetEmissiveColor.set(wave.color);
                     targetIntensity = wave.intensity;
+                }
+            }
+
+            // Impulse arrival flash: a decaying emissive flicker when an action
+            // potential lands on this neuron (recorded by the Impulses pool).
+            const flashTs = ARRIVAL_FLASH.get(node.id);
+            if (flashTs !== undefined) {
+                const flashAge = performance.now() - flashTs;
+                if (flashAge > 1500) {
+                    ARRIVAL_FLASH.delete(node.id);
+                } else if (!REDUCED_MOTION && node.status !== 'dormant') {
+                    targetIntensity += 0.9 * Math.exp(-flashAge / 280);
                 }
             }
 
@@ -277,7 +334,7 @@ const SLATE = new THREE.Color('#8B98A9');
 // Curved bezier line. Graphite circuitry with hue hints: resting color is the
 // source/target region blend mixed 35% toward slate; selecting a node lights
 // its circuit (unmixed blend @ 0.8) and dims everything else to 0.05.
-function SynapseLine({ source, target, strength, status, classification, hiddenRegions, selectedNodeId }: any) {
+function SynapseLine({ source, target, strength, status, classification, hiddenRegions, selectedNodeId, curveOffset }: any) {
     const [sourcePos, setSourcePos] = useState<[number, number, number]>([-50, -50, -50]);
     const [targetPos, setTargetPos] = useState<[number, number, number]>([50, 50, 50]);
     const [ready, setReady] = useState(false);
@@ -297,12 +354,13 @@ function SynapseLine({ source, target, strength, status, classification, hiddenR
         return { unmixed, mixed, circuit, mixedHex: `#${mixed.getHexString()}` };
     }, [blendHex]);
 
-    // Static random offset for the bezier curve midpoint to prevent vibration
-    const curveOffset = useMemo(() => [
-        (Math.random() - 0.5) * 15,
-        (Math.random() - 0.5) * 15,
-        (Math.random() - 0.5) * 15,
-    ], []);
+    // Static curve-midpoint offset — deterministic, attached to the link by
+    // GraphSimulation (seeded by endpoint ids) so the Impulses pool rides the
+    // exact same visible curve. Prevents vibration AND is remount-stable.
+    const co = curveOffset || ZERO_OFFSET;
+
+    // Cheap deterministic shimmer phase derived from the curve offset
+    const linePhase = co[0] * 0.9 + co[1] * 1.3 + co[2] * 1.7;
 
     // 3 discrete width tiers — 0.12 / 0.30 / 0.60
     let tierWidth = 0.12; // thin
@@ -319,7 +377,7 @@ function SynapseLine({ source, target, strength, status, classification, hiddenR
 
     const clamp = (val: number) => Math.max(-200, Math.min(200, val || 0));
 
-    useFrame(() => {
+    useFrame((state) => {
         if (typeof source === 'object' && typeof target === 'object') {
             if (
                 typeof source.x === 'number' && !Number.isNaN(source.x) &&
@@ -356,6 +414,12 @@ function SynapseLine({ source, target, strength, status, classification, hiddenR
             }
             if (hidden) targetOpacity = 0.03; // region-filtered synapses
 
+            // Living web: gentle opacity shimmer, phase-offset per line.
+            // Only at rest — never during circuit tracing or region filtering.
+            if (!REDUCED_MOTION && !selectedNodeId && !hidden) {
+                targetOpacity *= 1 + 0.12 * Math.sin(state.clock.elapsedTime * 0.8 + linePhase);
+            }
+
             mat.opacity = THREE.MathUtils.lerp(mat.opacity, targetOpacity, 0.1);
             mat.color.lerp(targetColor, 0.1);
         }
@@ -363,11 +427,11 @@ function SynapseLine({ source, target, strength, status, classification, hiddenR
 
     if (!ready) return null;
 
-    // §10.3: Bezier midpoint — use the static curve offset
+    // §10.3: Bezier midpoint — use the shared static curve offset
     const mid: [number, number, number] = [
-        (sourcePos[0] + targetPos[0]) / 2 + curveOffset[0],
-        (sourcePos[1] + targetPos[1]) / 2 + curveOffset[1],
-        (sourcePos[2] + targetPos[2]) / 2 + curveOffset[2],
+        (sourcePos[0] + targetPos[0]) / 2 + co[0],
+        (sourcePos[1] + targetPos[1]) / 2 + co[1],
+        (sourcePos[2] + targetPos[2]) / 2 + co[2],
     ];
 
     return (
@@ -385,6 +449,197 @@ function SynapseLine({ source, target, strength, status, classification, hiddenR
             gapSize={isDormant ? 1 : 0}
             opacity={baseOpacity}
         />
+    );
+}
+
+// ─── Impulses — action potentials ────────────────────────────────────────────
+// A pooled InstancedMesh of bright additive dots traveling source→target along
+// the EXACT bezier curves the synapses draw (shared link.curveOffset). Zero
+// per-frame React state — matrices/colors are mutated in useFrame with
+// preallocated scratch objects. Colors are blend × 2 so impulses cross the
+// 0.85 bloom threshold in high quality and still read as hot additive dots
+// when bloom is off.
+function Impulses({ links, selectedNodeId, hiddenRegions }: any) {
+    const meshRef = useRef<any>(null);
+    const spawnCounter = useRef(1);
+    const frameCounter = useRef(0);
+    // Reusable eligibility index lists — refilled at most once per frame,
+    // and only on frames where at least one impulse respawns.
+    const eligRef = useRef<{ all: number[]; circuit: number[]; frame: number }>({ all: [], circuit: [], frame: -1 });
+
+    const poolSize = Math.max(12, Math.min(80, Math.round((links?.length || 0) * 0.25)));
+
+    // Pool re-seeds whenever the graph rebuilds. linkIndex -1 = "needs spawn";
+    // the staggered starting t keeps impulses from marching in lockstep.
+    const impulses = useMemo(
+        () =>
+            Array.from({ length: poolSize }, (_, i) => ({
+                linkIndex: -1,
+                t: getSeededRandom(i * 13 + 1),
+                speed: 0.35 + 0.35 * getSeededRandom(i * 13 + 2),
+                base: 0.45, // 0.6 on thick/critical links
+                sMod: 1, // circuit-tracing scale modifier, lerped per frame
+            })),
+        [links, poolSize]
+    );
+
+    // Never intercept raycasts; zero all matrices so a fresh pool doesn't
+    // flash unit spheres at the origin before the first animation frame.
+    useEffect(() => {
+        const mesh = meshRef.current;
+        if (!mesh) return;
+        mesh.raycast = () => null;
+        IMPULSE_MAT.makeScale(0, 0, 0);
+        IMPULSE_MAT.setPosition(0, 0, 0);
+        for (let i = 0; i < poolSize; i++) mesh.setMatrixAt(i, IMPULSE_MAT);
+        mesh.instanceMatrix.needsUpdate = true;
+    }, [impulses, poolSize]);
+
+    useFrame((state, delta) => {
+        if (REDUCED_MOTION) return;
+        const mesh = meshRef.current;
+        if (!mesh || !links || links.length === 0) return;
+
+        frameCounter.current += 1;
+        const frame = frameCounter.current;
+        const now = performance.now();
+        let colorDirty = false;
+
+        // Keep the arrival-flash map bounded: sweep stale entries every ~2s
+        if (frame % 120 === 0 && ARRIVAL_FLASH.size > 0) {
+            ARRIVAL_FLASH.forEach((ts, id) => {
+                if (now - ts > 1500) ARRIVAL_FLASH.delete(id);
+            });
+        }
+
+        const elig = eligRef.current;
+
+        for (let i = 0; i < impulses.length; i++) {
+            const imp = impulses[i];
+            if (imp.linkIndex >= 0) imp.t += imp.speed * delta;
+
+            // ── Respawn (initial spawns keep their staggered t; completions reset)
+            if (imp.linkIndex < 0 || imp.t >= 1) {
+                if (imp.linkIndex >= 0) {
+                    // Arrival: flag the target neuron for an emissive flicker
+                    const done = links[imp.linkIndex];
+                    const arrTgt = done && typeof done.target === 'object' ? done.target : null;
+                    if (arrTgt && arrTgt.id && arrTgt.status !== 'dormant') ARRIVAL_FLASH.set(arrTgt.id, now);
+                    imp.t = 0;
+                }
+
+                // Refill eligibility lists (no hidden regions, no dormant
+                // endpoints) at most once per frame
+                if (elig.frame !== frame) {
+                    elig.frame = frame;
+                    elig.all.length = 0;
+                    elig.circuit.length = 0;
+                    for (let li = 0; li < links.length; li++) {
+                        const l = links[li];
+                        const ls = l.source;
+                        const lt = l.target;
+                        if (typeof ls !== 'object' || typeof lt !== 'object') continue;
+                        if (ls.status === 'dormant' || lt.status === 'dormant') continue;
+                        if (hiddenRegions.has(ls.region) || hiddenRegions.has(lt.region)) continue;
+                        elig.all.push(li);
+                        if (selectedNodeId && (ls.id === selectedNodeId || lt.id === selectedNodeId)) elig.circuit.push(li);
+                    }
+                }
+
+                const n = spawnCounter.current++;
+                // Circuit bias: ~70% of respawns ride the traced circuit
+                const pool =
+                    selectedNodeId && elig.circuit.length > 0 && getSeededRandom(n * 31 + 7) < 0.7
+                        ? elig.circuit
+                        : elig.all;
+
+                if (pool.length === 0) {
+                    imp.linkIndex = -1;
+                    IMPULSE_MAT.makeScale(0, 0, 0);
+                    mesh.setMatrixAt(i, IMPULSE_MAT);
+                    continue;
+                }
+
+                imp.linkIndex = pool[Math.min(pool.length - 1, Math.floor(getSeededRandom(n * 31 + 11) * pool.length))];
+                imp.speed = 0.35 + 0.35 * getSeededRandom(n * 31 + 13);
+                imp.sMod = 1;
+
+                const spawned = links[imp.linkIndex];
+                imp.base = spawned.classification === 'critical' || (spawned.strength || 0) > 2.0 ? 0.6 : 0.45;
+
+                // Impulse color = link blend × 2 → crosses the bloom threshold
+                const sHex = REGION_COLORS[spawned.source.region] || '#FFFFFF';
+                const tHex = REGION_COLORS[spawned.target.region] || sHex;
+                IMPULSE_COL_A.set(sHex);
+                IMPULSE_COL_B.set(tHex);
+                IMPULSE_COL_A.lerp(IMPULSE_COL_B, 0.5).multiplyScalar(2.0);
+                mesh.setColorAt(i, IMPULSE_COL_A);
+                colorDirty = true;
+            }
+
+            const link = links[imp.linkIndex];
+            const s = link.source;
+            const e = link.target;
+            if (
+                typeof s !== 'object' || typeof e !== 'object' ||
+                !Number.isFinite(s.x) || !Number.isFinite(e.x)
+            ) {
+                IMPULSE_MAT.makeScale(0, 0, 0);
+                mesh.setMatrixAt(i, IMPULSE_MAT);
+                continue;
+            }
+
+            // ── Quadratic bezier: the SAME curve SynapseLine draws
+            const co = link.curveOffset || ZERO_OFFSET;
+            const sx = clampCoord(s.x), sy = clampCoord(s.y), sz = clampCoord(s.z);
+            const ex = clampCoord(e.x), ey = clampCoord(e.y), ez = clampCoord(e.z);
+            const mx = (sx + ex) / 2 + co[0];
+            const my = (sy + ey) / 2 + co[1];
+            const mz = (sz + ez) / 2 + co[2];
+            const t = imp.t;
+            const u = 1 - t;
+            const px = u * u * sx + 2 * u * t * mx + t * t * ex;
+            const py = u * u * sy + 2 * u * t * my + t * t * ey;
+            const pz = u * u * sz + 2 * u * t * mz + t * t * ez;
+
+            // ── Envelope: smooth grow-in / shrink-out over the first/last 12%
+            let env = 1;
+            if (t < 0.12) {
+                const k = t / 0.12;
+                env = k * k * (3 - 2 * k);
+            } else if (t > 0.88) {
+                const k = (1 - t) / 0.12;
+                env = k * k * (3 - 2 * k);
+            }
+
+            // ── Circuit tracing: non-circuit impulses shrink away (they will
+            // respawn onto the circuit); circuit impulses scale up 1.4×.
+            // Impulses caught mid-flight in a freshly hidden region also shrink.
+            let modTarget = 1;
+            if (hiddenRegions.has(s.region) || hiddenRegions.has(e.region)) {
+                modTarget = 0;
+            } else if (selectedNodeId) {
+                modTarget = s.id === selectedNodeId || e.id === selectedNodeId ? 1.4 : 0;
+            }
+            imp.sMod = THREE.MathUtils.lerp(imp.sMod, modTarget, 0.12);
+
+            const scale = imp.base * env * imp.sMod;
+            IMPULSE_MAT.makeScale(scale, scale, scale);
+            IMPULSE_MAT.setPosition(px, py, pz);
+            mesh.setMatrixAt(i, IMPULSE_MAT);
+        }
+
+        mesh.instanceMatrix.needsUpdate = true;
+        if (colorDirty && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    });
+
+    if (REDUCED_MOTION) return null;
+
+    return (
+        <instancedMesh ref={meshRef} args={[undefined, undefined, poolSize]} frustumCulled={false}>
+            <sphereGeometry args={[1, 6, 6]} />
+            <meshBasicMaterial transparent blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
+        </instancedMesh>
     );
 }
 
@@ -439,21 +694,6 @@ function GraphSimulation({ plexus, quality }: any) {
             allNodes = [...allNodes, ...amygdalaNodes];
         }
 
-        const getHash = (str: string) => {
-            let hash = 0;
-            for (let i = 0; i < str.length; i++) {
-                hash = Math.imul(31, hash) + str.charCodeAt(i) | 0;
-            }
-            return hash;
-        };
-
-        const getSeededRandom = (seed: number) => {
-            let t = seed += 0x6D2B79F5;
-            t = Math.imul(t ^ t >>> 15, t | 1);
-            t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-            return ((t ^ t >>> 14) >>> 0) / 4294967296;
-        };
-
         const nodes = allNodes.map((n: any, i: number) => {
             // Seed initial positions inside the region's anatomical cavity volume.
             // Deterministic random using node ID, preventing nodes diving to new
@@ -484,12 +724,23 @@ function GraphSimulation({ plexus, quality }: any) {
             const sourceExists = nodes.some((n: any) => n && n.id === s.source_node_id);
             const targetExists = nodes.some((n: any) => n && n.id === s.target_node_id);
             if (sourceExists && targetExists) {
+                const sourceId = Number.isInteger(s.source_node_id) ? String(s.source_node_id) : s.source_node_id;
+                const targetId = Number.isInteger(s.target_node_id) ? String(s.target_node_id) : s.target_node_id;
+                // Deterministic bezier midpoint bump, seeded by the endpoint
+                // ids — SynapseLine draws this curve AND the Impulses pool
+                // rides the exact same math. Stable across remounts.
+                const curveSeed = getHash(`${sourceId}→${targetId}`);
                 acc.push({
-                    source: Number.isInteger(s.source_node_id) ? String(s.source_node_id) : s.source_node_id,
-                    target: Number.isInteger(s.target_node_id) ? String(s.target_node_id) : s.target_node_id,
+                    source: sourceId,
+                    target: targetId,
                     strength: s.strength || 0,
                     status: s.status,
-                    classification: s.metadata?.impact_classification || 'low'
+                    classification: s.metadata?.impact_classification || 'low',
+                    curveOffset: [
+                        (getSeededRandom(curveSeed) - 0.5) * 15,
+                        (getSeededRandom(curveSeed + 1) - 0.5) * 15,
+                        (getSeededRandom(curveSeed + 2) - 0.5) * 15,
+                    ]
                 });
             }
             return acc;
@@ -514,13 +765,19 @@ function GraphSimulation({ plexus, quality }: any) {
                 }
 
                 for (const target of targetNodes) {
+                    const curveSeed = getHash(`${a.id}→${target.id}`);
                     links.push({
                         source: a.id,
                         target: target.id,
                         strength: a.severity === 'critical' ? 3.0 : a.severity === 'high' ? 2.0 : 1.0,
                         status: 'dormant',
                         classification: a.severity || 'high',
-                        code: `SYN-${a.id.substring(0, 4).toUpperCase()}-${target.id.substring(0, 4).toUpperCase()}`
+                        code: `SYN-${a.id.substring(0, 4).toUpperCase()}-${target.id.substring(0, 4).toUpperCase()}`,
+                        curveOffset: [
+                            (getSeededRandom(curveSeed) - 0.5) * 15,
+                            (getSeededRandom(curveSeed + 1) - 0.5) * 15,
+                            (getSeededRandom(curveSeed + 2) - 0.5) * 15,
+                        ]
                     });
                 }
             }
@@ -593,8 +850,17 @@ function GraphSimulation({ plexus, quality }: any) {
                     classification={link.classification}
                     hiddenRegions={hiddenRegions}
                     selectedNodeId={selectedNodeId}
+                    curveOffset={link.curveOffset}
                 />
             ))}
+
+            {/* Neural activity: action potentials riding the synapse curves */}
+            <Impulses
+                links={graph?.links || []}
+                selectedNodeId={selectedNodeId}
+                hiddenRegions={hiddenRegions}
+            />
+
             {(graph?.nodes || []).map((node: any) => (
                 <NodeMesh
                     key={node.id}

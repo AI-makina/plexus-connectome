@@ -2,7 +2,7 @@ import { Project, SourceFile, Node } from 'ts-morph';
 import { graph } from '../core/graph';
 import { createNode, createSynapse, deterministicNodeId, deterministicSynapseId } from '../core/factories';
 import { PlexusNode, Region, NodeType, AnalysisStatus } from '../types';
-import { classifyRegion } from './classifier';
+import { classifyRegionScored, ScoredClassification } from './classifier';
 import { discoverFiles, saveFingerprints, loadFingerprints, getChangedFiles } from './discovery';
 import {
     extractReactComponents, extractHooks, extractRouteHandlers,
@@ -366,22 +366,40 @@ export class CodeAnalyzer {
 
         // Scanner-origin creation helpers: deterministic ids (stable across
         // re-scans) + provenance stamping (origin: 'scan') on every element.
-        const scanNode: typeof createNode = (partial) => createNode({
-            ...partial,
-            id: partial.id || deterministicNodeId(relativePath, partial.type, partial.name),
-            metadata: { origin: 'scan', ...(partial.metadata || {}) },
-        });
+        const scanNode = (partial: Parameters<typeof createNode>[0] & { cls?: ScoredClassification }) => {
+            const { cls, ...rest } = partial;
+            return createNode({
+                ...rest,
+                id: rest.id || deterministicNodeId(relativePath, rest.type, rest.name),
+                metadata: {
+                    origin: 'scan',
+                    ...(cls ? { classification_confidence: Math.round(cls.confidence * 100) / 100 } : {}),
+                    ...(rest.metadata || {}),
+                },
+            });
+        };
+
+        // Per-SYMBOL classification (v2): each symbol votes with its OWN text.
+        // Whole-file voting cross-contaminated regions (a 'className' inside a
+        // backend file's regex made it occipital). The module node still uses
+        // the whole file — that is its actual body.
+        const lines = content.split('\n');
+        const sliceLines = (start: number, end: number) =>
+            lines.slice(Math.max(0, start - 1), Math.min(lines.length, end)).join('\n');
+        const classify = (nodeType: NodeType, symbolText: string): ScoredClassification =>
+            classifyRegionScored(relativePath, nodeType, symbolText);
         const scanSynapse: typeof createSynapse = (partial) => createSynapse({
             ...partial,
             id: partial.id || deterministicSynapseId(partial.source_node_id, partial.target_node_id, partial.type),
         });
 
         // Create module node
-        const moduleRegion = classifyRegion(relativePath, 'module', content);
+        const moduleCls = classify('module', content);
         const moduleNode = scanNode({
             name: path.basename(relativePath),
             type: 'module',
-            region: moduleRegion,
+            region: moduleCls.region,
+            cls: moduleCls,
             file_path: relativePath,
             description: `Module ${relativePath}`,
             metadata: {
@@ -397,10 +415,12 @@ export class CodeAnalyzer {
         // Extract React components
         const components = extractReactComponents(sf);
         for (const comp of components) {
+            const compCls = classify('component', sliceLines(comp.startLine, comp.endLine));
             const node = scanNode({
                 name: comp.name,
                 type: 'component',
-                region: classifyRegion(relativePath, 'component', content),
+                region: compCls.region,
+                cls: compCls,
                 file_path: relativePath,
                 line_range: { start: comp.startLine, end: comp.endLine },
                 description: `React component ${comp.name}`,
@@ -421,10 +441,12 @@ export class CodeAnalyzer {
                 const fnDef = sf.getFunction(hook.name);
                 if (fnDef) {
                     seenHookDefs.add(hook.name);
+                    const hookCls = classify('hook', fnDef.getText());
                     const node = scanNode({
                         name: hook.name,
                         type: 'hook',
-                        region: classifyRegion(relativePath, 'hook', content),
+                        region: hookCls.region,
+                        cls: hookCls,
                         file_path: relativePath,
                         line_range: { start: fnDef.getStartLineNumber(), end: fnDef.getEndLineNumber() },
                         description: `Custom hook ${hook.name}`,
@@ -440,10 +462,12 @@ export class CodeAnalyzer {
         // Extract route handlers
         const routes = extractRouteHandlers(sf);
         for (const route of routes) {
+            const routeCls = classify('endpoint', sliceLines(route.line, route.line + 30));
             const node = scanNode({
                 name: `${route.method} ${route.pattern}`,
                 type: 'endpoint',
-                region: classifyRegion(relativePath, 'endpoint', content),
+                region: routeCls.region,
+                cls: routeCls,
                 file_path: relativePath,
                 line_range: { start: route.line, end: route.line },
                 description: `${route.method} handler for ${route.pattern}`,
@@ -458,10 +482,12 @@ export class CodeAnalyzer {
         // Extract types and interfaces
         const types = extractTypesAndInterfaces(sf);
         for (const t of types) {
+            const typeCls = classify(t.kind, sliceLines(t.startLine, t.endLine));
             const node = scanNode({
                 name: t.name,
                 type: t.kind,
-                region: classifyRegion(relativePath, t.kind, content),
+                region: typeCls.region,
+                cls: typeCls,
                 file_path: relativePath,
                 line_range: { start: t.startLine, end: t.endLine },
                 description: `${t.kind} ${t.name}`,
@@ -512,10 +538,12 @@ export class CodeAnalyzer {
             if (!name || childNodeIds.has(name)) continue;
             const isHook = name.startsWith('use') && /^use[A-Z]/.test(name);
             const nodeType: NodeType = isHook ? 'hook' : 'function';
+            const fnCls = classify(nodeType, fn.getText());
             const node = scanNode({
                 name,
                 type: nodeType,
-                region: classifyRegion(relativePath, nodeType, content),
+                region: fnCls.region,
+                cls: fnCls,
                 file_path: relativePath,
                 line_range: { start: fn.getStartLineNumber(), end: fn.getEndLineNumber() },
                 description: `${nodeType} ${name} in ${path.basename(relativePath)}`,
@@ -528,10 +556,12 @@ export class CodeAnalyzer {
         for (const cls of sf.getClasses()) {
             const name = cls.getName();
             if (!name || childNodeIds.has(name)) continue;
+            const classCls = classify('class', cls.getText());
             const node = scanNode({
                 name,
                 type: 'class',
-                region: classifyRegion(relativePath, 'class', content),
+                region: classCls.region,
+                cls: classCls,
                 file_path: relativePath,
                 line_range: { start: cls.getStartLineNumber(), end: cls.getEndLineNumber() },
                 description: `class ${name} in ${path.basename(relativePath)}`,
@@ -552,10 +582,12 @@ export class CodeAnalyzer {
                 const isHook = name.startsWith('use') && /^use[A-Z]/.test(name);
                 const isComp = /^[A-Z]/.test(name) && containsJSXText(init.getText());
                 const nodeType: NodeType = isHook ? 'hook' : isComp ? 'component' : 'function';
+                const vdCls = classify(nodeType, vd.getText());
                 const node = scanNode({
                     name,
                     type: nodeType,
-                    region: classifyRegion(relativePath, nodeType, content),
+                    region: vdCls.region,
+                    cls: vdCls,
                     file_path: relativePath,
                     line_range: { start: vd.getStartLineNumber(), end: vd.getEndLineNumber() },
                     description: `${nodeType} ${name}`,
@@ -564,10 +596,12 @@ export class CodeAnalyzer {
                 childNodeIds.set(name, node.id);
                 graph.addSynapse(scanSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes' }));
             } else if (Node.isObjectLiteralExpression(init)) {
+                const cfgCls = classify('config', vd.getText());
                 const node = scanNode({
                     name,
                     type: 'config',
-                    region: classifyRegion(relativePath, 'config', content),
+                    region: cfgCls.region,
+                    cls: cfgCls,
                     file_path: relativePath,
                     line_range: { start: vd.getStartLineNumber(), end: vd.getEndLineNumber() },
                     description: `config ${name}`,

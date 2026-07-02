@@ -15,7 +15,16 @@ export type NodeType =
     | 'endpoint' | 'model' | 'util' | 'constant' | 'type' | 'interface'
     | 'module' | 'page' | 'layout' | 'provider' | 'context' | 'store'
     | 'reducer' | 'action' | 'selector' | 'animation' | 'asset'
-    | 'env_var' | 'script' | 'class';
+    | 'env_var' | 'script' | 'class'
+    // Evidence Protocol / Taxonomy v2 element planes (facets + concepts +
+    // artifact-parsed elements):
+    | 'facet' | 'feature' | 'flow' | 'journey' | 'service' | 'entity'
+    | 'data_store' | 'deploy_target' | 'pipeline' | 'contract'
+    | 'template' | 'token_set' | 'command' | 'dependency_manifest';
+
+// The five synapse families engine physics reads (Roadmap 1.2). Derived from
+// the 27 legacy type labels via core/families.ts — never stored.
+export type SynapseFamily = 'DEPENDS_ON' | 'INVOKES' | 'EXCHANGES' | 'CONTRACTS' | 'CO_FAILED_WITH';
 
 export interface NodeHealth {
     stability_score: number;
@@ -44,6 +53,8 @@ export interface NodeMetadata {
      * Absent on legacy nodes — treated as 'scan' by re-scan replacement logic.
      */
     origin?: 'scan' | 'seed' | 'llm' | 'incident' | 'command';
+    /** winning-signal share from the classifier; < 0.5 belongs in a review queue */
+    classification_confidence?: number;
     language?: string;
     framework?: string;
     exports?: string[];

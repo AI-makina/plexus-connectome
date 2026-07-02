@@ -45,13 +45,15 @@ program
             visualization: { theme: "dark", background_color: "#0A0A0F", enable_bloom: true, enable_fog: true, enable_audio: false, default_camera_position: { x: 0, y: 50, z: 100 } },
             regions: {
                 custom_overrides: {},
+                // Taxonomy v2 (REGION_TAXONOMY.md §4.12): no blanket src/app →
+                // parietal (route.ts vs page.tsx differ per FILE, handled by
+                // path patterns); no utils/lib → cerebellum (helpers classify
+                // by their own behavior); no types → corpus_callosum (CC is
+                // earned by contract promotion, never assigned by path).
                 classification_hints: {
-                    'src/app': 'parietal_lobe',
                     'src/components': 'occipital_lobe',
                     'src/hooks': 'frontal_lobe',
                     'src/store': 'frontal_lobe',
-                    'src/lib': 'cerebellum',
-                    'src/utils': 'cerebellum',
                     'src/api': 'parietal_lobe',
                     'src/middleware': 'brain_stem',
                     'src/auth': 'brain_stem',
@@ -59,7 +61,6 @@ program
                     'src/db': 'temporal_lobe',
                     'src/models': 'temporal_lobe',
                     'src/styles': 'occipital_lobe',
-                    'src/types': 'corpus_callosum',
                     'prisma': 'temporal_lobe',
                     'public': 'occipital_lobe',
                 }

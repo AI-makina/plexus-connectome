@@ -16,6 +16,7 @@ import {
 } from '../core/session';
 import { checkClaims } from '../core/symbolIndex';
 import { buildBrief } from '../core/brief';
+import { familyOf } from '../core/families';
 import { getIntegrationPath } from '../core/context';
 
 export const app = express();
@@ -140,7 +141,9 @@ app.delete('/api/nodes/:id', (req, res) => {
 // ─── Synapses ────────────────────────────────────────────────────
 
 app.get('/api/synapses', (_req, res) => {
-    res.json(Array.from(graph.synapses.values()));
+    // family is DERIVED (core/families.ts) — physics reads families, the LLM
+    // reads the legacy type label as subtype metadata.
+    res.json(Array.from(graph.synapses.values()).map(s => ({ ...s, family: familyOf(s.type) })));
 });
 
 app.get('/api/synapses/cross-region', (_req, res) => {
@@ -458,8 +461,11 @@ app.get('/api/viz/stats', (_req, res) => {
     }
 
     const synapseTypes: Record<string, number> = {};
+    const synapseFamilies: Record<string, number> = {};
     for (const syn of graph.synapses.values()) {
         synapseTypes[syn.type] = (synapseTypes[syn.type] || 0) + 1;
+        const fam = familyOf(syn.type);
+        synapseFamilies[fam] = (synapseFamilies[fam] || 0) + 1;
     }
 
     res.json({
@@ -470,5 +476,6 @@ app.get('/api/viz/stats', (_req, res) => {
         regions: regionStats,
         node_types: nodeTypes,
         synapse_types: synapseTypes,
+        synapse_families: synapseFamilies,
     });
 });

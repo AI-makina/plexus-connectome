@@ -1,5 +1,6 @@
 import { graph } from './graph';
 import { AmygdalaEntry, ImpactNode, SimulationResult } from '../types';
+import { familyOf, reverseTraversesOnModify } from './families';
 import { getDb } from '../db/sqlite';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -36,7 +37,7 @@ export class ImpactSimulator {
         opts: { dryRun?: boolean } = {},
     ): SimulationResult {
         const blastRadius: Map<string, ImpactNode> = new Map();
-        const queue: { nodeId: string, distance: number, path: string[], currentStrength: number }[] = [];
+        const queue: { nodeId: string, distance: number, path: string[], currentStrength: number, viaReverse?: boolean }[] = [];
 
         for (const sourceId of sourceNodeIds) {
             const startNode = graph.nodes.get(sourceId);
@@ -57,25 +58,26 @@ export class ImpactSimulator {
                     }
                 }
 
-                // For "modify" changes: also follow INCOMING reads/depends_on edges in reverse.
-                // When node A is modified, every node B that reads FROM A is affected.
+                // For "modify" changes: also follow INCOMING edges in reverse.
+                // When node A is modified, every node B that depends on /
+                // invokes / reads from A is affected. Family-based (Roadmap
+                // 1.2): the old 4-type whitelist never fired on real scanned
+                // graphs — the scanner emits imports/renders/calls/composes,
+                // none of which were listed, so the physics was latent.
                 if (changeType === 'modify') {
                     for (const inSynId of adj.in) {
                         const syn = graph.synapses.get(inSynId);
                         if (syn && syn.status !== 'dormant') {
-                            const inType = syn.type;
                             const originalType = (typeof syn.metadata === 'object' && syn.metadata !== null)
-                                ? (syn.metadata as any).original_type || syn.type
-                                : syn.type;
-                            // Reverse-traverse if the incoming edge represents "reads from" or "depends on"
-                            const isReadDependency = ['depends_on', 'calls', 'inherits', 'subscribes'].includes(inType)
-                                || ['reads', 'uses', 'backed_by', 'implements', 'fetches', 'connects'].includes(originalType);
-                            if (isReadDependency) {
+                                ? (syn.metadata as any).original_type
+                                : undefined;
+                            if (reverseTraversesOnModify(syn.type, originalType)) {
                                 queue.push({
                                     nodeId: syn.source_node_id,
                                     distance: 1,
                                     path: [sourceId, syn.source_node_id],
-                                    currentStrength: syn.strength
+                                    currentStrength: syn.strength,
+                                    viaReverse: true
                                 });
                             }
                         }
@@ -87,14 +89,19 @@ export class ImpactSimulator {
         const importTimeBindings: { source: string, target: string, synId: string }[] = [];
 
         while (queue.length > 0) {
-            const { nodeId, distance, path, currentStrength } = queue.shift()!;
+            const { nodeId, distance, path, currentStrength, viaReverse } = queue.shift()!;
             const node = graph.nodes.get(nodeId);
             if (!node || node.status === 'dormant') continue;
+            // The sources ARE the change — they are never their own blast.
+            if (sourceNodeIds.includes(nodeId)) continue;
 
-            // Check if the synapse that brought us here has a binding_time
+            // Check the synapse that carried the impact here (searches BOTH
+            // directions — reverse-traversed hops used to always miss and get
+            // multiplier 1.0, so stale-binding physics never applied to them)
             const incomingSynId = path.length >= 2 ? this.findSynapse(path[path.length - 2], nodeId) : null;
             const incomingSyn = incomingSynId ? graph.synapses.get(incomingSynId) : null;
             const btMultiplier = incomingSyn ? bindingTimeMultiplier(incomingSyn.metadata?.binding_time) : 1.0;
+            const family = incomingSyn ? familyOf(incomingSyn.type) : 'DEPENDS_ON';
 
             // Track import-time bindings for warnings
             if (incomingSyn?.metadata?.binding_time === 'import' || incomingSyn?.metadata?.binding_time === 'startup') {
@@ -105,7 +112,16 @@ export class ImpactSimulator {
                 });
             }
 
-            const effectiveStrength = currentStrength * (1 / (distance * 0.5 + 1)) * btMultiplier;
+            // Family physics (Roadmap 1.2):
+            //   CONTRACTS — breaking a shared shape reaches every consumer at
+            //     full strength; distance does not soften a broken schema.
+            //   CO_FAILED_WITH — incident-learned causality never decays with
+            //     distance; it either fires or it doesn't.
+            //   Everything else — the standard distance decay.
+            const distanceDecay = (family === 'CONTRACTS' || family === 'CO_FAILED_WITH')
+                ? 1.0
+                : 1 / (distance * 0.5 + 1);
+            const effectiveStrength = currentStrength * distanceDecay * btMultiplier;
             if (effectiveStrength <= 0.2) continue;
 
             let impactLevel: 'critical' | 'high' | 'moderate' | 'low' = 'low';
@@ -134,11 +150,17 @@ export class ImpactSimulator {
                     for (const outSynId of adj.out) {
                         const syn = graph.synapses.get(outSynId);
                         if (syn && syn.status !== 'dormant') {
+                            // Containment echo guard: a node reached in REVERSE
+                            // (a reader/container of the modified node) must not
+                            // re-expand DOWN through its other composes edges —
+                            // the modified symbol's siblings are not its blast.
+                            if (viaReverse && syn.type === 'composes') continue;
                             queue.push({
                                 nodeId: syn.target_node_id,
                                 distance: distance + 1,
                                 path: [...path, syn.target_node_id],
-                                currentStrength: syn.strength
+                                currentStrength: syn.strength,
+                                viaReverse
                             });
                         }
                     }
@@ -193,11 +215,23 @@ export class ImpactSimulator {
     }
 
     private findSynapse(sourceId: string, targetId: string): string | null {
+        // Forward edge first (source → target)…
         const adj = graph.adjacency.get(sourceId);
-        if (!adj) return null;
-        for (const synId of adj.out) {
-            const syn = graph.synapses.get(synId);
-            if (syn && syn.target_node_id === targetId) return synId;
+        if (adj) {
+            for (const synId of adj.out) {
+                const syn = graph.synapses.get(synId);
+                if (syn && syn.target_node_id === targetId) return synId;
+            }
+        }
+        // …then the reverse edge (target → source): reverse-traversed modify
+        // hops ride the real edge pointing the other way. Without this branch
+        // the binding-time amplifier and family physics never saw them.
+        const tAdj = graph.adjacency.get(targetId);
+        if (tAdj) {
+            for (const synId of tAdj.out) {
+                const syn = graph.synapses.get(synId);
+                if (syn && syn.target_node_id === sourceId) return synId;
+            }
         }
         return null;
     }

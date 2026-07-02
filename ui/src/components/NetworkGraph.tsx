@@ -48,9 +48,25 @@ const ZERO_OFFSET = [0, 0, 0];
 const clampCoord = (v: number) => Math.max(-200, Math.min(200, v || 0));
 
 // Preallocated scratch — zero allocations in the impulse hot loop
-const IMPULSE_MAT = new THREE.Matrix4();
 const IMPULSE_COL_A = new THREE.Color();
 const IMPULSE_COL_B = new THREE.Color();
+
+// ─── Electric impulses (§ neural activity v2) ────────────────────────────────
+// GPU machinery lives in electricImpulse.ts: the instanced discharge-ribbon
+// shader that replaced the sphere pool, the anchor-guarded LineMaterial patch
+// (energization window + traveling vibration wave), the shared clock, and the
+// per-link pulse-slot registry that couples the two.
+import {
+    SHARED_TIME,
+    PULSE_REG,
+    RIBBON_STRIDE,
+    createRibbonGeometry,
+    createRibbonMaterial,
+    electrifyLine,
+    updateVibFrame,
+    ensureInstanceT,
+    writeBezierIntoLine,
+} from './electricImpulse';
 
 // ─── The invisible brain (anatomy in theme/brainAnatomy.js) ──────────────────
 // Nodes are sampled inside per-region 3D cavity volumes whose union forms a
@@ -334,11 +350,20 @@ const SLATE = new THREE.Color('#8B98A9');
 // Curved bezier line. Graphite circuitry with hue hints: resting color is the
 // source/target region blend mixed 35% toward slate; selecting a node lights
 // its circuit (unmixed blend @ 0.8) and dims everything else to 0.05.
-function SynapseLine({ source, target, strength, status, classification, hiddenRegions, selectedNodeId, curveOffset }: any) {
+//
+// v2: the React props are FROZEN after the first valid frame — drei must build
+// the Line2 geometry exactly once. All position tracking (d3 settle, graph
+// rebuilds) happens imperatively via writeBezierIntoLine into the geometry's
+// interleaved buffer; the electric energization window + vibration wave ride
+// the same material via electrifyLine's shader patch.
+function SynapseLine({ index, source, target, strength, status, classification, hiddenRegions, selectedNodeId, curveOffset }: any) {
     const [sourcePos, setSourcePos] = useState<[number, number, number]>([-50, -50, -50]);
     const [targetPos, setTargetPos] = useState<[number, number, number]>([50, 50, 50]);
     const [ready, setReady] = useState(false);
     const lineRef = useRef<any>(null);
+    // Geometry identity + last-written endpoints (Infinity = force first write)
+    const geomRef = useRef<any>(null);
+    const lastWrite = useRef<Float32Array>(new Float32Array(6).fill(Infinity));
 
     // Color: blend source and target region colors for cross-region synapses
     const sourceColor = (typeof source === 'object' && source.region) ? (REGION_COLORS[source.region] || '#FFFFFF') : '#8B98A9';
@@ -377,16 +402,82 @@ function SynapseLine({ source, target, strength, status, classification, hiddenR
 
     const clamp = (val: number) => Math.max(-200, Math.min(200, val || 0));
 
+    // Patch the material once ready (idempotent; values re-written on graph
+    // rebuilds that reuse this component instance) and register the pulse
+    // slots so the Impulses pool can energize/vibrate this line.
+    useEffect(() => {
+        if (!ready || REDUCED_MOTION) return;
+        const line = lineRef.current;
+        if (!line || !line.material) return;
+        const rec = electrifyLine(
+            line.material, lineWidth, colors.unmixed,
+            sourcePos[0], sourcePos[1], sourcePos[2],
+            targetPos[0], targetPos[1], targetPos[2],
+            co,
+        );
+        PULSE_REG[index] = rec;
+        return () => {
+            if (PULSE_REG[index] === rec) PULSE_REG[index] = null;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [ready, index, colors, lineWidth, co]);
+
     useFrame((state) => {
-        if (typeof source === 'object' && typeof target === 'object') {
-            if (
-                typeof source.x === 'number' && !Number.isNaN(source.x) &&
-                typeof target.x === 'number' && !Number.isNaN(target.x) &&
-                Number.isFinite(source.x) && Number.isFinite(target.x)
-            ) {
-                setSourcePos([clamp(source.x), clamp(source.y), clamp(source.z)]);
-                setTargetPos([clamp(target.x), clamp(target.y), clamp(target.z)]);
-                if (!ready) setReady(true);
+        const sObj0 = typeof source === 'object' ? source : null;
+        const tObj0 = typeof target === 'object' ? target : null;
+        const valid = !!sObj0 && !!tObj0 &&
+            typeof sObj0.x === 'number' && !Number.isNaN(sObj0.x) &&
+            typeof tObj0.x === 'number' && !Number.isNaN(tObj0.x) &&
+            Number.isFinite(sObj0.x) && Number.isFinite(tObj0.x);
+
+        if (!ready) {
+            // ONE state commit total: freeze the initial curve, then never
+            // trigger drei's geometry path again.
+            if (valid) {
+                setSourcePos([clamp(sObj0.x), clamp(sObj0.y), clamp(sObj0.z)]);
+                setTargetPos([clamp(tObj0.x), clamp(tObj0.y), clamp(tObj0.z)]);
+                setReady(true);
+            }
+            return;
+        }
+
+        const line = lineRef.current;
+        if (line) {
+            // Graph rebuilds hand this reused component a fresh geometry built
+            // from the frozen (stale) props — detect the swap, restore the
+            // segment parametrization, and force a position rewrite.
+            if (line.geometry !== geomRef.current) {
+                geomRef.current = line.geometry;
+                ensureInstanceT(line.geometry);
+                lastWrite.current.fill(Infinity);
+                line.frustumCulled = false; // shader displaces verts; bounds are stale by design
+            }
+
+            // §9 settle tracking — epsilon-gated in-place buffer write, no React
+            if (valid) {
+                const sx = clamp(sObj0.x), sy = clamp(sObj0.y), sz = clamp(sObj0.z);
+                const ex = clamp(tObj0.x), ey = clamp(tObj0.y), ez = clamp(tObj0.z);
+                const lw = lastWrite.current;
+                if (
+                    Math.abs(lw[0] - sx) > 1e-4 || Math.abs(lw[1] - sy) > 1e-4 || Math.abs(lw[2] - sz) > 1e-4 ||
+                    Math.abs(lw[3] - ex) > 1e-4 || Math.abs(lw[4] - ey) > 1e-4 || Math.abs(lw[5] - ez) > 1e-4
+                ) {
+                    lw[0] = sx; lw[1] = sy; lw[2] = sz;
+                    lw[3] = ex; lw[4] = ey; lw[5] = ez;
+                    writeBezierIntoLine(
+                        line.geometry,
+                        sx, sy, sz,
+                        (sx + ex) / 2 + co[0], (sy + ey) / 2 + co[1], (sz + ez) / 2 + co[2],
+                        ex, ey, ez,
+                    );
+                    // Keep the vibration plane ⊥ the LIVE chord — settle motion
+                    // and graph rebuilds would otherwise leave it perpendicular
+                    // to a stale chord (longitudinal sliding instead of shake).
+                    updateVibFrame(line.material, sx, sy, sz, ex, ey, ez, co);
+                    // Dashes parametrize on cumulative distance; only dormant
+                    // lines dash, and only settle motion changes lengths.
+                    if (isDormant && line.computeLineDistances) line.computeLineDistances();
+                }
             }
         }
 
@@ -425,14 +516,17 @@ function SynapseLine({ source, target, strength, status, classification, hiddenR
         }
     });
 
-    if (!ready) return null;
-
-    // §10.3: Bezier midpoint — use the shared static curve offset
-    const mid: [number, number, number] = [
+    // §10.3: Bezier midpoint — use the shared static curve offset. Memoized
+    // (with the frozen endpoint states) so drei's points/geometry memos never
+    // re-fire on parent re-renders: geometry is built once, then only mutated.
+    const mid: [number, number, number] = useMemo(() => [
         (sourcePos[0] + targetPos[0]) / 2 + co[0],
         (sourcePos[1] + targetPos[1]) / 2 + co[1],
         (sourcePos[2] + targetPos[2]) / 2 + co[2],
-    ];
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    ], [sourcePos, targetPos, co]);
+
+    if (!ready) return null;
 
     return (
         <QuadraticBezierLine
@@ -453,12 +547,14 @@ function SynapseLine({ source, target, strength, status, classification, hiddenR
 }
 
 // ─── Impulses — action potentials ────────────────────────────────────────────
-// A pooled InstancedMesh of bright additive dots traveling source→target along
-// the EXACT bezier curves the synapses draw (shared link.curveOffset). Zero
-// per-frame React state — matrices/colors are mutated in useFrame with
-// preallocated scratch objects. Colors are blend × 2 so impulses cross the
-// 0.85 bloom threshold in high quality and still read as hot additive dots
-// when bloom is off.
+// One instanced discharge-ribbon mesh (electricImpulse.ts) whose bolts travel
+// source→target along the EXACT bezier curves the synapses draw (shared
+// link.curveOffset): the vertex shader re-evaluates the curve over a trailing
+// t-window from per-instance control points; the fragment draws a re-striking
+// white-hot filament inside the region-colored corona. Zero per-frame React
+// state — the hot loop writes plain floats into one interleaved buffer, plus
+// three floats into the owning synapse's pulse slot so the line itself lights
+// up and vibrates under the passing discharge.
 function Impulses({ links, selectedNodeId, hiddenRegions }: any) {
     const meshRef = useRef<any>(null);
     const spawnCounter = useRef(1);
@@ -477,33 +573,87 @@ function Impulses({ links, selectedNodeId, hiddenRegions }: any) {
                 linkIndex: -1,
                 t: getSeededRandom(i * 13 + 1),
                 speed: 0.35 + 0.35 * getSeededRandom(i * 13 + 2),
-                base: 0.45, // 0.6 on thick/critical links
                 sMod: 1, // circuit-tracing scale modifier, lerped per frame
+                seed: getSeededRandom(i * 13 + 3), // strike-clock phase offset
+                halfWidth: 0.9, // 0.9 / 1.15 / 1.4 by the line's width tier
+                slotRec: null as any, // claimed pulse slots on the ridden line
+                slotIdx: 0,
             })),
         [links, poolSize]
     );
 
-    // Never intercept raycasts; zero all matrices so a fresh pool doesn't
-    // flash unit spheres at the origin before the first animation frame.
+    const ribbon = useMemo(() => {
+        const { geometry, data } = createRibbonGeometry(poolSize);
+        return { geometry, data, material: createRibbonMaterial() };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [links, poolSize]);
+
+    // Rebuilds and context-loss remounts dispose cleanly; a fresh interleaved
+    // buffer is all-zero (aMisc.x = 0 → degenerate width, no fragments), so a
+    // new pool never flashes before its first animation frame. Stale pulse
+    // slots from a torn-down pool are silenced so no line vibrates forever.
     useEffect(() => {
         const mesh = meshRef.current;
-        if (!mesh) return;
-        mesh.raycast = () => null;
-        IMPULSE_MAT.makeScale(0, 0, 0);
-        IMPULSE_MAT.setPosition(0, 0, 0);
-        for (let i = 0; i < poolSize; i++) mesh.setMatrixAt(i, IMPULSE_MAT);
-        mesh.instanceMatrix.needsUpdate = true;
-    }, [impulses, poolSize]);
+        if (mesh) mesh.raycast = () => null;
+        for (let li = 0; li < PULSE_REG.length; li++) {
+            const rec = PULSE_REG[li];
+            if (rec) {
+                rec.ownerA = rec.ownerB = -1;
+                rec.a.set(-1, 0, 0, 0);
+                rec.b.set(-1, 0, 0, 0);
+            }
+        }
+        return () => {
+            ribbon.geometry.dispose();
+            ribbon.material.dispose();
+        };
+    }, [ribbon]);
+
+    // Pulse-slot bookkeeping — plain field mutation, never allocates.
+    const releaseSlot = (imp: any, i: number) => {
+        const rec = imp.slotRec;
+        if (!rec) return;
+        if (imp.slotIdx === 0 && rec.ownerA === i) {
+            rec.ownerA = -1;
+            rec.a.y = 0;
+        } else if (imp.slotIdx === 1 && rec.ownerB === i) {
+            rec.ownerB = -1;
+            rec.b.y = 0;
+        }
+        imp.slotRec = null;
+    };
+    const claimSlot = (imp: any, i: number) => {
+        const rec = PULSE_REG[imp.linkIndex];
+        if (!rec) {
+            imp.slotRec = null;
+            return;
+        }
+        if (rec.ownerA < 0) {
+            rec.ownerA = i;
+            imp.slotIdx = 0;
+        } else if (rec.ownerB < 0) {
+            rec.ownerB = i;
+            imp.slotIdx = 1;
+        } else {
+            rec.ownerA = i; // steal A — the robbed impulse sees the owner change
+            imp.slotIdx = 0;
+        }
+        imp.slotRec = rec;
+    };
 
     useFrame((state, delta) => {
         if (REDUCED_MOTION) return;
-        const mesh = meshRef.current;
-        if (!mesh || !links || links.length === 0) return;
+        if (!links || links.length === 0) return;
+
+        // ONE clock write drives the ribbon crackle AND every patched line's
+        // energization/vibration shader (shared uniform object).
+        SHARED_TIME.value = state.clock.elapsedTime;
+
+        const arr = ribbon.data.array as Float32Array;
 
         frameCounter.current += 1;
         const frame = frameCounter.current;
         const now = performance.now();
-        let colorDirty = false;
 
         // Keep the arrival-flash map bounded: sweep stale entries every ~2s
         if (frame % 120 === 0 && ARRIVAL_FLASH.size > 0) {
@@ -516,15 +666,19 @@ function Impulses({ links, selectedNodeId, hiddenRegions }: any) {
 
         for (let i = 0; i < impulses.length; i++) {
             const imp = impulses[i];
+            const o = i * RIBBON_STRIDE;
             if (imp.linkIndex >= 0) imp.t += imp.speed * delta;
 
             // ── Respawn (initial spawns keep their staggered t; completions reset)
             if (imp.linkIndex < 0 || imp.t >= 1) {
                 if (imp.linkIndex >= 0) {
-                    // Arrival: flag the target neuron for an emissive flicker
+                    // Arrival: flag the target neuron for an emissive flicker;
+                    // releasing the pulse slot lets the line's vibration wake
+                    // ring down in sync with the flash decay.
                     const done = links[imp.linkIndex];
                     const arrTgt = done && typeof done.target === 'object' ? done.target : null;
                     if (arrTgt && arrTgt.id && arrTgt.status !== 'dormant') ARRIVAL_FLASH.set(arrTgt.id, now);
+                    releaseSlot(imp, i);
                     imp.t = 0;
                 }
 
@@ -554,27 +708,36 @@ function Impulses({ links, selectedNodeId, hiddenRegions }: any) {
                         : elig.all;
 
                 if (pool.length === 0) {
+                    releaseSlot(imp, i);
                     imp.linkIndex = -1;
-                    IMPULSE_MAT.makeScale(0, 0, 0);
-                    mesh.setMatrixAt(i, IMPULSE_MAT);
+                    arr[o + 14] = 0; // aMisc.x = 0 → degenerate width, no fragments
                     continue;
                 }
 
                 imp.linkIndex = pool[Math.min(pool.length - 1, Math.floor(getSeededRandom(n * 31 + 11) * pool.length))];
                 imp.speed = 0.35 + 0.35 * getSeededRandom(n * 31 + 13);
                 imp.sMod = 1;
+                imp.seed = getSeededRandom(n * 31 + 17);
 
                 const spawned = links[imp.linkIndex];
-                imp.base = spawned.classification === 'critical' || (spawned.strength || 0) > 2.0 ? 0.6 : 0.45;
+                // Discharge caliber follows the synapse's 3 width tiers
+                imp.halfWidth =
+                    spawned.classification === 'critical' || (spawned.strength || 0) > 2.0 ? 1.4 :
+                    spawned.classification === 'high' || spawned.classification === 'moderate' || (spawned.strength || 0) > 1.2 ? 1.15 :
+                    0.9;
 
-                // Impulse color = link blend × 2 → crosses the bloom threshold
+                // Corona color = raw link blend — brightness is shaped in-shader
+                // (only the white filament core crosses the bloom threshold)
                 const sHex = REGION_COLORS[spawned.source.region] || '#FFFFFF';
                 const tHex = REGION_COLORS[spawned.target.region] || sHex;
                 IMPULSE_COL_A.set(sHex);
                 IMPULSE_COL_B.set(tHex);
-                IMPULSE_COL_A.lerp(IMPULSE_COL_B, 0.5).multiplyScalar(2.0);
-                mesh.setColorAt(i, IMPULSE_COL_A);
-                colorDirty = true;
+                IMPULSE_COL_A.lerp(IMPULSE_COL_B, 0.5);
+                arr[o + 11] = IMPULSE_COL_A.r;
+                arr[o + 12] = IMPULSE_COL_A.g;
+                arr[o + 13] = IMPULSE_COL_A.b;
+
+                claimSlot(imp, i);
             }
 
             const link = links[imp.linkIndex];
@@ -584,12 +747,16 @@ function Impulses({ links, selectedNodeId, hiddenRegions }: any) {
                 typeof s !== 'object' || typeof e !== 'object' ||
                 !Number.isFinite(s.x) || !Number.isFinite(e.x)
             ) {
-                IMPULSE_MAT.makeScale(0, 0, 0);
-                mesh.setMatrixAt(i, IMPULSE_MAT);
+                // Hide the bolt AND silence the line — a leaked slot would keep
+                // the conductor glowing at a frozen head with no discharge.
+                releaseSlot(imp, i);
+                arr[o + 14] = 0;
                 continue;
             }
 
-            // ── Quadratic bezier: the SAME curve SynapseLine draws
+            // ── Quadratic bezier control points: the SAME curve SynapseLine
+            // draws — the ribbon's vertex shader evaluates it per vertex, so
+            // rewriting these every frame keeps settle tracking exact.
             const co = link.curveOffset || ZERO_OFFSET;
             const sx = clampCoord(s.x), sy = clampCoord(s.y), sz = clampCoord(s.z);
             const ex = clampCoord(e.x), ey = clampCoord(e.y), ez = clampCoord(e.z);
@@ -597,10 +764,6 @@ function Impulses({ links, selectedNodeId, hiddenRegions }: any) {
             const my = (sy + ey) / 2 + co[1];
             const mz = (sz + ez) / 2 + co[2];
             const t = imp.t;
-            const u = 1 - t;
-            const px = u * u * sx + 2 * u * t * mx + t * t * ex;
-            const py = u * u * sy + 2 * u * t * my + t * t * ey;
-            const pz = u * u * sz + 2 * u * t * mz + t * t * ez;
 
             // ── Envelope: smooth grow-in / shrink-out over the first/last 12%
             let env = 1;
@@ -623,23 +786,68 @@ function Impulses({ links, selectedNodeId, hiddenRegions }: any) {
             }
             imp.sMod = THREE.MathUtils.lerp(imp.sMod, modTarget, 0.12);
 
-            const scale = imp.base * env * imp.sMod;
-            IMPULSE_MAT.makeScale(scale, scale, scale);
-            IMPULSE_MAT.setPosition(px, py, pz);
-            mesh.setMatrixAt(i, IMPULSE_MAT);
+            // Chord+control perimeter halved ≈ curve length: keeps the trail
+            // length and crackle density uniform in WORLD units across the
+            // 10–60 wu span of synapse curves.
+            const d1x = mx - sx, d1y = my - sy, d1z = mz - sz;
+            const d2x = ex - mx, d2y = ey - my, d2z = ez - mz;
+            const d3x = ex - sx, d3y = ey - sy, d3z = ez - sz;
+            const lenApprox = (
+                Math.sqrt(d1x * d1x + d1y * d1y + d1z * d1z) +
+                Math.sqrt(d2x * d2x + d2y * d2y + d2z * d2z) +
+                Math.sqrt(d3x * d3x + d3y * d3y + d3z * d3z)
+            ) / 2;
+            // ~7 world units of comet trail behind the discharge head
+            const trailT = Math.max(0.08, Math.min(0.35, 7.0 / Math.max(lenApprox, 1e-3)));
+
+            const amp = env * imp.sMod;
+
+            arr[o] = sx; arr[o + 1] = sy; arr[o + 2] = sz;           // aP0
+            arr[o + 3] = mx; arr[o + 4] = my; arr[o + 5] = mz;       // aP1
+            arr[o + 6] = ex; arr[o + 7] = ey; arr[o + 8] = ez;       // aP2
+            arr[o + 9] = t;                                          // aHead.x
+            arr[o + 10] = trailT;                                    // aHead.y
+            arr[o + 14] = amp;                                       // aMisc.x
+            arr[o + 15] = imp.seed;                                  // aMisc.y
+            arr[o + 16] = imp.halfWidth;                             // aMisc.z
+            arr[o + 17] = lenApprox;                                 // aMisc.w
+
+            // Late registration pickup: PULSE_REG lands via passive effects
+            // AFTER the pool's first frame (and after rebuild sweeps), so
+            // orphaned impulses re-claim — but only a FREE slot. Stealing here
+            // would let a robbed impulse rob slot A back every frame.
+            if (!imp.slotRec) {
+                const reg = PULSE_REG[imp.linkIndex];
+                if (reg && (reg.ownerA < 0 || reg.ownerB < 0)) claimSlot(imp, i);
+            }
+
+            // Energize + vibrate the conductor under the passing discharge
+            const rec = imp.slotRec;
+            if (rec) {
+                const owns = imp.slotIdx === 0 ? rec.ownerA === i : rec.ownerB === i;
+                if (owns) {
+                    const v = imp.slotIdx === 0 ? rec.a : rec.b;
+                    v.x = t;
+                    v.y = amp;
+                    v.z = imp.seed;
+                } else {
+                    imp.slotRec = null; // slot was stolen — stop writing
+                }
+            }
         }
 
-        mesh.instanceMatrix.needsUpdate = true;
-        if (colorDirty && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        ribbon.data.needsUpdate = true;
     });
 
     if (REDUCED_MOTION) return null;
 
     return (
-        <instancedMesh ref={meshRef} args={[undefined, undefined, poolSize]} frustumCulled={false}>
-            <sphereGeometry args={[1, 6, 6]} />
-            <meshBasicMaterial transparent blending={THREE.AdditiveBlending} depthWrite={false} toneMapped={false} />
-        </instancedMesh>
+        <mesh
+            ref={meshRef}
+            geometry={ribbon.geometry}
+            material={ribbon.material}
+            frustumCulled={false}
+        />
     );
 }
 
@@ -843,6 +1051,7 @@ function GraphSimulation({ plexus, quality }: any) {
             {(graph?.links || []).map((link: any, i: number) => (
                 <SynapseLine
                     key={i}
+                    index={i}
                     source={link.source}
                     target={link.target}
                     strength={link.strength}

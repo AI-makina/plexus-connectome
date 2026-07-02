@@ -136,14 +136,22 @@ export function analyzeArtifacts(targetPath: string): ArtifactResult {
         // The file joins the discovered set even when every var dedupes —
         // otherwise its own nodes get stale-cleaned on the next scan.
         if (!result.paths.includes(envFile)) result.paths.push(envFile);
-        const existingEnvNames = new Set(
-            [...graph.nodes.values()].filter(n => n.type === 'env_var').map(n => n.name)
-        );
         let count = 0;
         for (const line of env.split('\n')) {
             const m = line.match(/^\s*([A-Z][A-Z0-9_]{2,})\s*=/);
-            if (m && !existingEnvNames.has(m[1]) && count < 40) {
-                addNode(envFile, 'env_var', 'brain_stem', m[1], `Environment variable declared in ${envFile}`, {}, ['env']);
+            if (!m || count >= 40) continue;
+            // App-wide singleton id — shared with the code scanner's env nodes
+            const envId = deterministicNodeId('__env__', 'env_var', m[1]);
+            if (!graph.nodes.has(envId)) {
+                const node = createNode({
+                    id: envId, name: m[1], type: 'env_var', region: 'brain_stem',
+                    file_path: envFile,
+                    description: `Environment variable declared in ${envFile}`,
+                    metadata: { origin: 'scan', classification_confidence: 1 },
+                    tags: ['artifact', 'env'],
+                });
+                graph.addNode(node);
+                result.nodesCreated++;
                 count++;
             }
         }

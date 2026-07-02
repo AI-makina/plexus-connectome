@@ -171,6 +171,10 @@ export class CodeAnalyzer {
         // scan edges from unprocessed files) — only where both endpoints exist.
         this.restorePreservedSynapses(preservedSynapses);
 
+        // Phase 3.3: Contract promotion (taxonomy §2.9 three-way disposition) —
+        // CC nodes are EARNED, never assigned by path/type.
+        this.contractPromotionPass();
+
         // Phase 3.5: Calculate Cascade Influence
         console.log('[Analyzer] Calculating Synapse Cascade Influence...');
         this.calculateCascadeInfluence();
@@ -318,6 +322,56 @@ export class CodeAnalyzer {
         if (dropped + twins > 0) console.log(`[Analyzer] restore: ${restored} preserved, ${twins} legacy twins skipped, ${dropped} dropped (endpoints gone).`);
     }
 
+    // ─── Contract promotion (taxonomy §2.9) ──────────────────────────
+    // A type/interface earns corpus_callosum residency only when it is
+    // consumed from ≥2 distinct regions (a translation artifact between
+    // them). Single-region types inherit their consumers' region; unconsumed
+    // types stay where the classifier put them. Runs after relationships so
+    // consumer regions are real.
+    private contractPromotionPass() {
+        const moved: string[] = [];
+        for (const node of graph.nodes.values()) {
+            if (node.type !== 'type' && node.type !== 'interface') continue;
+            if ((node.metadata as any)?.origin !== 'scan') continue; // never re-home enrichment
+
+            const conns = graph.getNodeConnections(node.id);
+            const consumerRegions = new Set<string>();
+            for (const syn of conns.incoming) {
+                if (syn.type !== 'imports' || syn.status === 'dormant') continue;
+                const consumer = graph.nodes.get(syn.source_node_id);
+                if (consumer && consumer.file_path !== node.file_path) consumerRegions.add(consumer.region);
+            }
+
+            let target: Region | null = null;
+            if (consumerRegions.size >= 2) target = 'corpus_callosum';
+            else if (consumerRegions.size === 1) target = [...consumerRegions][0] as Region;
+
+            if (target && target !== node.region) {
+                node.region = target;
+                if (target === 'corpus_callosum' && !node.tags.includes('contract')) node.tags.push('contract');
+                graph.updateNode(node.id, { region: target, tags: node.tags });
+                moved.push(node.id);
+            }
+        }
+        // Re-homed endpoints invalidate cross_region flags on their edges
+        for (const id of moved) {
+            const conns = graph.getNodeConnections(id);
+            for (const syn of [...conns.incoming, ...conns.outgoing]) {
+                const s = graph.nodes.get(syn.source_node_id);
+                const t = graph.nodes.get(syn.target_node_id);
+                if (!s || !t) continue;
+                const cross = s.region !== t.region;
+                if (cross !== syn.cross_region) {
+                    graph.updateSynapse(syn.id, {
+                        cross_region: cross,
+                        regions_bridged: cross ? [s.region, t.region] : [],
+                    });
+                }
+            }
+        }
+        if (moved.length > 0) console.log(`[Analyzer] Contract promotion: ${moved.length} type/interface node(s) re-homed.`);
+    }
+
     // One-time migration: collapse (source, target, type) duplicate edges that
     // earlier restore passes may have created — keep the deterministic copy.
     private dedupeSynapseTwins() {
@@ -429,8 +483,20 @@ export class CodeAnalyzer {
             syn.metadata.intrinsic_importance = intrinsic;
             syn.metadata.cascade_influence = downstreamCount;
 
+            // Evidence-learned component (Roadmap 2.1): bounded boost from
+            // co-change/co-failure evidence, decaying with a 90-day half-life
+            // so stale evidence stops steering the physics.
+            const meta: any = syn.metadata;
+            let learned = 0;
+            if (typeof meta.learned_boost === 'number' && meta.learned_boost > 0) {
+                const ageDays = meta.learned_at
+                    ? (Date.now() - new Date(meta.learned_at).getTime()) / 86400000
+                    : 0;
+                learned = Math.min(0.3, meta.learned_boost) * Math.pow(0.5, ageDays / 90);
+            }
+
             let impactClassification: 'critical' | 'high' | 'moderate' | 'low' = 'low';
-            const finalStrength = Math.min(3.0, intrinsic + (downstreamCount * 0.05));
+            const finalStrength = Math.min(3.0, intrinsic + (downstreamCount * 0.05) + learned);
 
             if (finalStrength > 2.0) impactClassification = 'critical';
             else if (finalStrength > 1.2) impactClassification = 'high';
@@ -446,8 +512,40 @@ export class CodeAnalyzer {
 
         // Scanner-origin creation helpers: deterministic ids (stable across
         // re-scans) + provenance stamping (origin: 'scan') on every element.
+        // GENESIS RECONCILER (Roadmap 1.8 / taxonomy Genesis flow): if a
+        // PLANNED node matches this (file_path, name), the scan ACTIVATES it —
+        // the planned id survives (so seeded synapses/cascade paths keep
+        // pointing at it), status flips to active, origin stays 'seed'.
+        const normPath = (p: string) => (p || '').replace(/^\.?\//, '');
+        // Matches planned nodes AND previously-activated seed nodes — without
+        // the second clause, the next re-scan would mint a deterministic twin
+        // beside the seed node it activated last time.
+        const findPlanned = (name: string) => {
+            for (const n of graph.nodes.values()) {
+                const isSeedHere = (n.status === 'planned' || (n.metadata as any)?.origin === 'seed');
+                if (isSeedHere && n.name === name && normPath(n.file_path) === normPath(relativePath)) return n;
+            }
+            return null;
+        };
         const scanNode = (partial: Parameters<typeof createNode>[0] & { cls?: ScoredClassification }) => {
             const { cls, ...rest } = partial;
+            const planned = findPlanned(rest.name);
+            if (planned) {
+                return createNode({
+                    ...rest,
+                    id: planned.id,
+                    region: planned.region, // the plan's placement is intent — keep it
+                    description: planned.description || rest.description,
+                    status: 'active',
+                    created_at: planned.created_at,
+                    metadata: {
+                        ...(planned.metadata || {}),
+                        ...(rest.metadata || {}),
+                        origin: 'seed', // survives future scans (origin-aware wipes skip it)
+                        ...(cls ? { classification_confidence: Math.round(cls.confidence * 100) / 100 } : {}),
+                    },
+                });
+            }
             return createNode({
                 ...rest,
                 id: rest.id || deterministicNodeId(relativePath, rest.type, rest.name),
@@ -594,22 +692,34 @@ export class CodeAnalyzer {
             console.log(`[Analyzer] Signature note: ${moduleNode.name} mixes getBoundingClientRect() with position:${cssPos[0].property} — candidate for an amygdala code_signature (Phase 1.6).`);
         }
 
-        // Extract env vars
+        // Extract env vars — APP-WIDE SINGLETONS (taxonomy engine plan #7):
+        // one node per variable regardless of how many files read it, with a
+        // `configures` edge to every reader — so "modify JWT_SECRET" reaches
+        // all its consumers instead of touching one orphaned per-file copy.
         const envVars = extractEnvVars(sf);
         for (const ev of envVars) {
-            if (!childNodeIds.has(`env:${ev.name}`)) {
-                const node = scanNode({
+            const envId = deterministicNodeId('__env__', 'env_var', ev.name);
+            if (!graph.nodes.has(envId)) {
+                const node = createNode({
+                    id: envId,
                     name: ev.name,
                     type: 'env_var',
                     region: 'brain_stem',
-                    file_path: relativePath,
+                    file_path: relativePath, // first reader — wipe/recreate cycles keep the id
                     line_range: { start: ev.line, end: ev.line },
                     description: `Environment variable ${ev.name}`,
                     tags: ['env'],
+                    metadata: { origin: 'scan' },
                 });
                 graph.addNode(node);
-                childNodeIds.set(`env:${ev.name}`, node.id);
             }
+            childNodeIds.set(`env:${ev.name}`, envId);
+            graph.addSynapse(scanSynapse({
+                source_node_id: envId,
+                target_node_id: moduleNode.id,
+                type: 'configures',
+                description: `${ev.name} configures ${moduleNode.name}`,
+            }));
         }
 
         // Extract remaining functions/classes not already captured

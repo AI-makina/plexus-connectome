@@ -231,6 +231,133 @@ program
         console.log(`\nwritten: ${outPath}`);
     });
 
+// ─── Evidence Protocol 2.1: evidence-learned synapse strength ─────────────────
+
+program
+    .command('learn')
+    .description('Apply mined co-change evidence as bounded, audited, decaying strength boosts on EXISTING synapses (dry-run by default)')
+    .option('-p, --path <path>', 'Path to target app', process.cwd())
+    .option('--apply', 'Actually write the boosts (default: dry-run)')
+    .action((options: any) => {
+        const targetPath = path.resolve(options.path);
+        const integrationPath = path.join(targetPath, 'plexus-integration');
+        const proposalsPath = path.join(integrationPath, 'plexus-proposals.json');
+        if (!fs.existsSync(proposalsPath)) {
+            console.error('No plexus-proposals.json — run "plexus mine" first.');
+            process.exit(1);
+        }
+        setContext(integrationPath, targetPath);
+        initDb(integrationPath);
+        graph.loadFromDb();
+
+        const proposals = JSON.parse(fs.readFileSync(proposalsPath, 'utf8')).proposals || [];
+        const coChanges = proposals.filter((p: any) => p.kind === 'co_change');
+
+        const byFile = new Map<string, string>(); // file_path → module node id
+        for (const n of graph.nodes.values()) {
+            if (n.type === 'module') byFile.set(n.file_path.replace(/^\.?\//, ''), n.id);
+        }
+
+        const audit: any[] = [];
+        for (const p of coChanges) {
+            const [fa, fb] = p.files.map((f: string) => f.replace(/^\.?\//, ''));
+            const na = byFile.get(fa);
+            const nb = byFile.get(fb);
+            if (!na || !nb) continue;
+
+            // Only strengthen EXISTING edges — evidence tunes the map, it
+            // never invents structure (that would be belief posing as fact).
+            let edge: any = null;
+            for (const syn of graph.synapses.values()) {
+                if ((syn.source_node_id === na && syn.target_node_id === nb) ||
+                    (syn.source_node_id === nb && syn.target_node_id === na)) {
+                    edge = syn;
+                    break;
+                }
+            }
+            if (!edge) continue;
+
+            const meta: any = edge.metadata || {};
+            const prior = typeof meta.learned_boost === 'number' ? meta.learned_boost : 0;
+            // Bounded: +0.01 per co-change observation, cumulative cap 0.3
+            const boost = Math.min(0.3, prior + Math.min(0.1, 0.01 * p.co_change_count));
+            if (boost <= prior + 0.001) continue;
+
+            audit.push({
+                timestamp: new Date().toISOString(),
+                synapse_id: edge.id,
+                between: [fa, fb],
+                evidence: `co_change x${p.co_change_count}`,
+                learned_boost: { from: prior, to: Math.round(boost * 1000) / 1000 },
+            });
+            if (options.apply) {
+                graph.updateSynapse(edge.id, {
+                    metadata: { ...meta, learned_boost: boost, learned_at: new Date().toISOString() },
+                } as any);
+            }
+        }
+
+        if (audit.length === 0) {
+            console.log('No applicable co-change evidence (edges must already exist between the co-changing modules).');
+            return;
+        }
+        for (const a of audit) {
+            console.log(` · ${a.between[0]} ⇄ ${a.between[1]} — ${a.evidence} → boost ${a.learned_boost.from} → ${a.learned_boost.to}`);
+        }
+        if (options.apply) {
+            const logPath = path.join(integrationPath, 'learning-log.json');
+            let existing: any[] = [];
+            try { existing = JSON.parse(fs.readFileSync(logPath, 'utf8')); } catch { /* first run */ }
+            fs.writeFileSync(logPath, JSON.stringify([...existing, ...audit], null, 2));
+            console.log(`\nApplied ${audit.length} boost(s) — audited in learning-log.json. Boosts decay (90-day half-life) unless re-evidenced.`);
+        } else {
+            console.log(`\nDRY RUN — ${audit.length} boost(s) would apply. Re-run with --apply.`);
+        }
+    });
+
+// ─── Onboarding orchestration (Graft first hour) ──────────────────────────────
+
+program
+    .command('onboard')
+    .description('Graft an existing app: analyze → report → mine → integration instructions')
+    .option('-p, --path <path>', 'Path to target app', process.cwd())
+    .action((options: any) => {
+        const targetPath = path.resolve(options.path);
+        const integrationPath = path.join(targetPath, 'plexus-integration');
+        const cliPath = path.join(__dirname, 'cli.js');
+        const run = (cmd: string) => {
+            try { execSync(cmd, { stdio: 'inherit' }); } catch { /* step failures shown inline */ }
+        };
+        if (!fs.existsSync(integrationPath)) {
+            console.log('⬡ Step 0 — init');
+            run(`node "${cliPath}" init -t "${targetPath}"`);
+            console.log('\n→ EDIT plexus-integration/plexus-manifest.json classification_hints for YOUR directory layout.');
+            console.log('  (Manifest hints are the classifier\'s strongest signal — this is the highest-leverage ten minutes.)');
+            console.log('  Then re-run: plexus onboard\n');
+            return;
+        }
+        console.log('⬡ Step 1 — scan');
+        run(`node "${cliPath}" analyze -p "${targetPath}"`);
+        console.log('\n⬡ Step 2 — utilization report');
+        run(`node "${cliPath}" report -p "${targetPath}"`);
+        console.log('\n⬡ Step 3 — git-history mining (proposals only)');
+        run(`node "${cliPath}" mine -p "${targetPath}"`);
+        console.log(`\n⬡ Step 4 — plug your AI in:
+  claude mcp add plexus -- node "${cliPath}" mcp -p "${targetPath}"
+  node "${cliPath}" hook-install -p "${targetPath}"
+  node "${cliPath}" rules -p "${targetPath}"     # snippet for CLAUDE.md / non-MCP assistants
+
+⬡ Step 5 — the trust test (do this in your AI session):
+  Take your actual next task. Ask for the plan WITHOUT consulting, then with
+  session_open + claim_check + consult. Compare: invented APIs avoided, real
+  files identified, risks surfaced. Trust forms from the demonstrated delta.
+
+⬡ Step 6 — enrichment (LLM): create the concept layer the scanner can't see
+  (features, journeys, services, entities), review plexus-proposals.json and
+  confirm real incidents into the amygdala, resolve the low-confidence queue
+  shown in the report.`);
+    });
+
 // ─── Evidence Protocol 1.1: the MCP plug ──────────────────────────────────────
 
 program

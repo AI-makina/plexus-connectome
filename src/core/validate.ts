@@ -17,7 +17,7 @@ const REGIONS: Region[] = [
     'cerebellum', 'brain_stem', 'limbic_system', 'amygdala', 'corpus_callosum',
 ];
 
-const NODE_STATUSES = ['active', 'dormant'];
+const NODE_STATUSES = ['active', 'dormant', 'planned'];
 const SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low'];
 const AMYGDALA_STATUSES = ['active', 'resolved', 'superseded'];
 

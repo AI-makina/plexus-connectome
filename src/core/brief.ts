@@ -141,6 +141,13 @@ export function buildBrief(req: BriefRequest, simulator: ImpactSimulator): Brief
         }
     }
 
+    // Invariants bound to anything in the risk set (fact-keyed, Roadmap 1.6)
+    let invariantHits: { statement: string }[] = [];
+    try {
+        const { invariantsTouching } = require('./invariants');
+        invariantHits = invariantsTouching(riskIds);
+    } catch { /* registry unavailable — brief still renders */ }
+
     // Dormant neighbors: "we already tried that"
     const dormantNeighbors: PlexusNode[] = [];
     for (const node of graph.nodes.values()) {
@@ -202,6 +209,13 @@ export function buildBrief(req: BriefRequest, simulator: ImpactSimulator): Brief
             if (t.description) lines.push(`  ${trunc(t.description, 140)}`);
         }
         if (unresolved.length) lines.push(`- ⚠ unresolved (NOT in the graph — do not assume these exist): ${unresolvedLine()}`);
+
+        if (invariantHits.length > 0) {
+            lines.push('', '## ⛨ INVARIANTS — must not break');
+            for (const inv of invariantHits.slice(0, 6)) {
+                lines.push(`- ${trunc(inv.statement, 160)}`);
+            }
+        }
 
         if (amygdalaHits.length > 0) {
             lines.push('', '## ⚠ AMYGDALA — this has failed before');

@@ -376,6 +376,26 @@ app.post('/api/consult', (req, res) => {
     }
 });
 
+// ─── Invariants (Roadmap 1.6 — fact-keyed) ───────────────────────
+app.get('/api/invariants', (_req, res) => {
+    const { loadInvariants } = require('../core/invariants');
+    res.json(loadInvariants());
+});
+
+app.post('/api/invariants', (req, res) => {
+    const { declareInvariant } = require('../core/invariants');
+    const { statement, node_ids, declared_by } = req.body || {};
+    const r = declareInvariant(statement, node_ids, declared_by === 'user' ? 'user' : 'llm');
+    if (!r.ok) return res.status(400).json({ error: r.error });
+    res.json(r.invariant);
+});
+
+app.delete('/api/invariants/:id', (req, res) => {
+    const { retireInvariant } = require('../core/invariants');
+    if (!retireInvariant(req.params.id)) return res.status(404).json({ error: 'invariant not found' });
+    res.json({ success: true });
+});
+
 // Claim-diff verification (Roadmap 1.5, workflow Step 6): the AI declares
 // what it claims to have created/touched; the engine diffs those claims
 // against the graph and file fingerprints. Without this, the update step is

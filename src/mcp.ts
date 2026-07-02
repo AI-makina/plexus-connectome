@@ -141,6 +141,17 @@ const TOOLS = [
         },
     },
     {
+        name: 'declare_invariant',
+        description: 'Declare a truth the code must never violate ("totals are computed server-side only"), bound to the node ids it protects. Future consultations touching those nodes will surface it. Use sparingly (≤12).',
+        inputSchema: {
+            type: 'object', required: ['statement', 'node_ids'],
+            properties: {
+                statement: { type: 'string' },
+                node_ids: { type: 'array', items: { type: 'string' } },
+            },
+        },
+    },
+    {
         name: 'update_graph',
         description: 'Deposit new map facts after executing a change: add nodes (with declared origin llm/seed) and synapses for what you created. Part of the mandatory post-change update step.',
         inputSchema: {
@@ -234,6 +245,14 @@ async function callTool(name: string, args: any): Promise<string> {
             return r.status === 200
                 ? `node dormant (${r.data.deactivated_synapses} synapses ride along) — it will surface as "already tried" in future consultations`
                 : `mark_dormant failed (${r.status}): ${JSON.stringify(r.data)}`;
+        }
+        case 'declare_invariant': {
+            const r = await apiRequest('POST', '/api/invariants', {
+                statement: args?.statement, node_ids: args?.node_ids, declared_by: 'llm',
+            });
+            return r.status === 200
+                ? `invariant declared (${r.data.id}) — consultations touching its nodes will surface it`
+                : `declare failed (${r.status}): ${JSON.stringify(r.data)}`;
         }
         case 'update_graph': {
             const out: string[] = [];

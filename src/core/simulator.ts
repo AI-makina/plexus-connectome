@@ -104,6 +104,9 @@ export class ImpactSimulator {
             if (!node || node.status === 'dormant') continue;
             // The sources ARE the change — they are never their own blast.
             if (sourceNodeIds.includes(nodeId)) continue;
+            // Planned nodes (Genesis seeds) simulate at half strength and are
+            // reported separately — a plan is advisory physics, not risk.
+            const plannedMultiplier = node.status === 'planned' ? 0.5 : 1.0;
 
             // The EXACT synapse that carried the impact rides in the queue —
             // re-deriving it by endpoint pair picked an arbitrary parallel edge
@@ -130,7 +133,7 @@ export class ImpactSimulator {
             const distanceDecay = (family === 'CONTRACTS' || family === 'CO_FAILED_WITH')
                 ? 1.0
                 : 1 / (distance * 0.5 + 1);
-            const effectiveStrength = currentStrength * distanceDecay * btMultiplier;
+            const effectiveStrength = currentStrength * distanceDecay * btMultiplier * plannedMultiplier;
             if (effectiveStrength <= 0.2) continue;
 
             let impactLevel: 'critical' | 'high' | 'moderate' | 'low' = 'low';
@@ -151,7 +154,8 @@ export class ImpactSimulator {
                     impact_level: impactLevel,
                     distance_from_source: distance,
                     connection_path: path,
-                    amygdala_warnings: warnings
+                    amygdala_warnings: warnings,
+                    ...(node.status === 'planned' ? { planned: true } : {}),
                 });
 
                 const adj = graph.adjacency.get(nodeId);
@@ -220,8 +224,11 @@ export class ImpactSimulator {
         }
 
         const blastArray = Array.from(blastRadius.values());
-        const criticalCount = blastArray.filter(n => n.impact_level === 'critical').length;
-        const highCount = blastArray.filter(n => n.impact_level === 'high').length;
+        // Planned reaches never feed the risk score (deliberation-settled)
+        const realBlast = blastArray.filter(n => !n.planned);
+        const plannedImpact = blastArray.length - realBlast.length;
+        const criticalCount = realBlast.filter(n => n.impact_level === 'critical').length;
+        const highCount = realBlast.filter(n => n.impact_level === 'high').length;
         const amygdalaAlerts = blastArray.reduce((acc, curr) => acc + curr.amygdala_warnings.length, 0);
 
         let riskScore = Math.min(1.0, (criticalCount * 0.3 + highCount * 0.15 + amygdalaAlerts * 0.1) / 5);
@@ -242,6 +249,10 @@ export class ImpactSimulator {
             riskScore = Math.min(1.0, riskScore + importTimeBindings.length * 0.1);
         }
 
+        if (plannedImpact > 0) {
+            recommendation += ` [${plannedImpact}] PLANNED node(s) in reach — check plan conformance (does this change fulfill or contradict the seeded design?).`;
+        }
+
         const result: SimulationResult = {
             id: uuidv4(),
             source_nodes: sourceNodeIds,
@@ -251,7 +262,8 @@ export class ImpactSimulator {
             blast_radius: blastArray,
             amygdala_alerts: amygdalaAlerts,
             risk_score: riskScore,
-            recommendation
+            recommendation,
+            planned_impact: plannedImpact,
         };
 
         // dryRun (consultation briefs): pure computation — no history entry,

@@ -85,7 +85,9 @@ export interface PlexusNode {
     tags: string[];
     health: NodeHealth;
     position_3d: NodePosition;
-    status: 'active' | 'dormant';
+    /** 'planned' = seeded at Genesis before code exists; the scanner
+     *  reconciles planned→active by (file_path, name) when code lands. */
+    status: 'active' | 'dormant' | 'planned';
     dormant_reason?: string;
     dormant_since?: string;
     was_connected_to?: string[];
@@ -186,6 +188,8 @@ export interface ImpactNode {
     distance_from_source: number;
     connection_path: string[];
     amygdala_warnings: AmygdalaEntry[];
+    /** reached through a planned (not-yet-built) node — advisory, not risk */
+    planned?: boolean;
 }
 
 export interface SimulationResult {
@@ -198,6 +202,8 @@ export interface SimulationResult {
     amygdala_alerts: number;
     risk_score: number;
     recommendation: string;
+    /** planned-node reaches (0.5× strength) — reported separately, never in risk_score */
+    planned_impact?: number;
 }
 
 // Analysis status

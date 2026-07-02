@@ -191,6 +191,158 @@ exit 0
         console.log(`Installed warn-only pre-commit hook at ${hookPath}`);
     });
 
+// ─── Evidence Protocol 1.1: the MCP plug ──────────────────────────────────────
+
+program
+    .command('mcp')
+    .description('Run the Plexus MCP server over stdio (the plug for Claude Code / Cursor / any MCP client)')
+    .option('-p, --path <path>', 'Path to target app', process.cwd())
+    .action((options: any) => {
+        process.argv = [process.argv[0], process.argv[1], '-p', path.resolve(options.path)];
+        require('./mcp');
+    });
+
+program
+    .command('rules')
+    .description('Print the session-start rules snippet (CLAUDE.md / .cursorrules) and MCP registration command')
+    .option('-p, --path <path>', 'Path to target app', process.cwd())
+    .action((options: any) => {
+        const targetPath = path.resolve(options.path);
+        const cliPath = path.join(__dirname, 'cli.js');
+        console.log(`# ⬡ Plexus — Evidence Protocol (add to CLAUDE.md / .cursorrules)
+
+This project has a Plexus connectome brain. It exists to keep you grounded:
+never assert an identifier the graph can't confirm, never repeat a recorded
+failure, never change code blind to its blast radius.
+
+MANDATORY WORKFLOW — every session, before any code:
+1. Call the \`session_open\` MCP tool (or GET /api/session + /api/viz/stats).
+2. Before writing code that uses ANY function/component/endpoint/env var:
+   \`claim_check\` it. "missing" means it does not exist — do not invent it.
+3. Before changing a file: \`consult\` it. Read the AMYGDALA (this failed
+   before) and DORMANT (we already tried that) sections and respect them.
+4. Before non-trivial changes: \`simulate_impact\`; respect the risk verdict.
+5. After changing code: \`update_graph\` with what you created.
+6. After every FAILED fix attempt: \`deposit_amygdala\` (title, severity,
+   what broke, trigger nodes). Abandoned approaches: \`mark_dormant\`.
+
+Register the MCP server (Claude Code):
+  claude mcp add plexus -- node "${cliPath}" mcp -p "${targetPath}"
+
+Engine not running? Start it:  plexus serve -p "${targetPath}"
+Install the commit guard:      plexus hook-install -p "${targetPath}"
+`);
+    });
+
+// ─── Evidence Protocol 1.7: git-history mining (proposals ONLY) ───────────────
+
+program
+    .command('mine')
+    .description('Mine git history for failure signals → plexus-proposals.json (proposals only; never auto-creates memory)')
+    .option('-p, --path <path>', 'Path to target app', process.cwd())
+    .option('-n, --commits <n>', 'How many commits to scan', '500')
+    .action((options: any) => {
+        const targetPath = path.resolve(options.path);
+        const integrationPath = path.join(targetPath, 'plexus-integration');
+        if (!fs.existsSync(integrationPath)) {
+            console.error('Integration not found. Run "plexus init" first.');
+            process.exit(1);
+        }
+        let log = '';
+        try {
+            log = execSync(
+                `git log --pretty=format:'§%H|%s' --name-only -n ${parseInt(options.commits, 10) || 500}`,
+                { cwd: targetPath, maxBuffer: 32 * 1024 * 1024 }
+            ).toString();
+        } catch (e: any) {
+            console.error('git log failed:', e.message);
+            process.exit(1);
+        }
+
+        interface Commit { hash: string; subject: string; files: string[] }
+        const commits: Commit[] = [];
+        let current: Commit | null = null;
+        for (const line of log.split('\n')) {
+            if (line.startsWith('§')) {
+                const [hash, ...rest] = line.slice(1).split('|');
+                current = { hash, subject: rest.join('|'), files: [] };
+                commits.push(current);
+            } else if (line.trim() && current) {
+                current.files.push(line.trim());
+            }
+        }
+
+        const proposals: any[] = [];
+
+        // Tier 1 (highest precision): reverts — something was tried and undone
+        for (const c of commits) {
+            if (/^revert\b|\brevert(s|ed|ing)?\b/i.test(c.subject)) {
+                proposals.push({
+                    kind: 'revert', confidence: 'medium', origin: 'mined',
+                    title: c.subject.slice(0, 120), commit: c.hash.slice(0, 10),
+                    files: c.files.slice(0, 10),
+                    suggested_action: 'confirm into an amygdala entry: what was reverted and why',
+                });
+            }
+        }
+
+        // Tier 2: fix clusters — files that keep needing fixes
+        const fixCounts = new Map<string, { count: number; subjects: string[] }>();
+        for (const c of commits) {
+            if (/\b(fix|bug|hotfix|patch)\b/i.test(c.subject)) {
+                for (const f of c.files) {
+                    const e = fixCounts.get(f) || { count: 0, subjects: [] };
+                    e.count++;
+                    if (e.subjects.length < 3) e.subjects.push(c.subject.slice(0, 80));
+                    fixCounts.set(f, e);
+                }
+            }
+        }
+        for (const [file, e] of [...fixCounts.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 20)) {
+            if (e.count >= 3) {
+                proposals.push({
+                    kind: 'fix_cluster', confidence: 'low', origin: 'mined',
+                    file, fix_commits: e.count, sample_subjects: e.subjects,
+                    suggested_action: 'repeated fixes suggest an unstable node — consider an amygdala entry or lowered stability',
+                });
+            }
+        }
+
+        // Tier 3 (Phase 2.1 substrate): co-change pairs — evidence for learned
+        // CO_FAILED_WITH / strength updates. Proposals only.
+        const pairCounts = new Map<string, number>();
+        for (const c of commits) {
+            const fs_ = c.files.filter(f => /\.(ts|tsx|js|jsx)$/.test(f)).slice(0, 12);
+            for (let i = 0; i < fs_.length; i++) {
+                for (let j = i + 1; j < fs_.length; j++) {
+                    const key = [fs_[i], fs_[j]].sort().join(' ⇄ ');
+                    pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
+                }
+            }
+        }
+        for (const [pair, count] of [...pairCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) {
+            if (count >= 5) {
+                proposals.push({
+                    kind: 'co_change', confidence: 'low', origin: 'mined',
+                    files: pair.split(' ⇄ '), co_change_count: count,
+                    suggested_action: 'strong co-change evidence — candidate for a learned synapse / strength boost between their nodes',
+                });
+            }
+        }
+
+        const outPath = path.join(integrationPath, 'plexus-proposals.json');
+        fs.writeFileSync(outPath, JSON.stringify({
+            generated_at: new Date().toISOString(),
+            commits_scanned: commits.length,
+            note: 'PROPOSALS ONLY — mined signals are belief facts. Confirm explicitly (LLM or human) before anything enters the amygdala or the graph. Mining never auto-creates memory.',
+            proposals,
+        }, null, 2));
+        console.log(`Mined ${commits.length} commits → ${proposals.length} proposals (${outPath})`);
+        for (const p of proposals.slice(0, 8)) {
+            console.log(` · [${p.kind}] ${p.title || p.file || (p.files || []).join(' ⇄ ')}`);
+        }
+    });
+
 program
     .command('serve')
     .description('Start the Plexus API and Visualization servers')

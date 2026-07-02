@@ -369,6 +369,68 @@ app.post('/api/consult', (req, res) => {
     }
 });
 
+// Claim-diff verification (Roadmap 1.5, workflow Step 6): the AI declares
+// what it claims to have created/touched; the engine diffs those claims
+// against the graph and file fingerprints. Without this, the update step is
+// honor-system and the graph rots. verdict: 'pass' only when every claim
+// is confirmed and every touched file was re-scanned.
+app.post('/api/verify', (req, res) => {
+    const { created_symbols, touched_files } = req.body || {};
+    try {
+        const confirmed: any[] = [];
+        const contradicted: any[] = [];
+        for (const c of (Array.isArray(created_symbols) ? created_symbols : []).slice(0, 200)) {
+            const name = typeof c === 'string' ? c : c?.name;
+            if (typeof name !== 'string' || !name) continue;
+            const results = checkClaims([typeof c === 'string' ? c : { name, file_hint: c.file_path }]);
+            const r = results[0];
+            if (r.status === 'exists' || r.status === 'ambiguous') {
+                confirmed.push({ name, matches: r.matches.map(m => `${m.file_path} (${m.type})`) });
+            } else {
+                contradicted.push({ name, status: r.status, note: 'claimed created, but not present in the graph — re-scan the file (POST /api/analyze/file) or the claim is false' });
+            }
+        }
+
+        // File freshness: a touched file whose current hash differs from the
+        // last-scan fingerprint is UNRECONCILED — the graph doesn't know it.
+        const crypto = require('crypto');
+        const { getTargetPath } = require('../core/context');
+        let fingerprints: Record<string, string> = {};
+        try {
+            fingerprints = JSON.parse(fs.readFileSync(path.join(getIntegrationPath(), 'fingerprints.json'), 'utf8'));
+        } catch { /* never scanned */ }
+        const unreconciled: string[] = [];
+        const reconciled: string[] = [];
+        const unknown: string[] = [];
+        for (const f of (Array.isArray(touched_files) ? touched_files : []).slice(0, 200)) {
+            if (typeof f !== 'string') continue;
+            const rel = f.replace(/^\.?\//, '');
+            try {
+                const abs = path.join(getTargetPath(), rel);
+                const hash = crypto.createHash('md5').update(fs.readFileSync(abs)).digest('hex');
+                if (fingerprints[rel] === hash) reconciled.push(rel);
+                else unreconciled.push(rel);
+            } catch {
+                unknown.push(rel);
+            }
+        }
+
+        const verdict = contradicted.length === 0 && unreconciled.length === 0 ? 'pass' : 'mismatch';
+        recordConsultation('claim_check', [], [...reconciled, ...unreconciled]);
+        res.json({
+            verdict,
+            confirmed,
+            contradicted,
+            files: { reconciled, unreconciled, unknown },
+            hint: unreconciled.length > 0
+                ? 'unreconciled files: run POST /api/analyze/file {"file_path": "..."} for each, then verify again'
+                : undefined,
+        });
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ─── Simulation ──────────────────────────────────────────────────
 
 app.post('/api/simulate/impact', (req, res) => {

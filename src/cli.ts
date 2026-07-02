@@ -191,6 +191,46 @@ exit 0
         console.log(`Installed warn-only pre-commit hook at ${hookPath}`);
     });
 
+// ─── Evidence Protocol 1.3: utilization / imbalance report ────────────────────
+
+program
+    .command('report')
+    .description('Brain-utilization report: region shares vs archetype profile, dark regions, maturity')
+    .option('-p, --path <path>', 'Path to target app', process.cwd())
+    .action((options: any) => {
+        const targetPath = path.resolve(options.path);
+        const integrationPath = path.join(targetPath, 'plexus-integration');
+        if (!fs.existsSync(integrationPath)) {
+            console.error('Integration not found. Run "plexus init" first.');
+            process.exit(1);
+        }
+        setContext(integrationPath, targetPath);
+        const manifestPath = path.join(integrationPath, 'plexus-manifest.json');
+        if (fs.existsSync(manifestPath)) setManifest(JSON.parse(fs.readFileSync(manifestPath, 'utf8')));
+        initDb(integrationPath);
+        graph.loadFromDb();
+
+        const { computeUtilization } = require('./core/utilization');
+        const u = computeUtilization();
+
+        console.log(`\n⬡ PLEXUS UTILIZATION — score ${u.utilization_score} · map ${u.maturity.toUpperCase()} · ${u.freshness}`);
+        if (u.maturity_reasons.length) console.log(`  provisional because: ${u.maturity_reasons.join('; ')}`);
+        console.log('');
+        const pad = (s: string, n: number) => (s + ' '.repeat(n)).slice(0, n);
+        console.log(pad('REGION', 18) + pad('NODES', 7) + pad('SHARE', 8) + pad('EXPECTED', 10) + 'STATUS');
+        for (const r of u.regions) {
+            const mark = r.status === 'dark' ? '● DARK' : r.status === 'sparse' ? '◐ sparse' : r.status === 'not_applicable' ? '– n/a' : '○ ok';
+            console.log(pad(r.region, 18) + pad(String(r.node_count), 7) + pad(String(r.share), 8) + pad(String(r.expected_share), 10) + mark);
+        }
+        console.log(`\namygdala: ${u.amygdala.entries} — ${u.amygdala.note}`);
+        console.log(`origin mix: ${Object.entries(u.origin_mix).map(([k, v]) => `${k}:${v}`).join(' · ')}`);
+        if (u.low_confidence_nodes > 0) console.log(`review queue: ${u.low_confidence_nodes} node(s) below 0.5 classification confidence`);
+
+        const outPath = path.join(integrationPath, 'imbalance-report.json');
+        fs.writeFileSync(outPath, JSON.stringify({ generated_at: new Date().toISOString(), ...u }, null, 2));
+        console.log(`\nwritten: ${outPath}`);
+    });
+
 // ─── Evidence Protocol 1.1: the MCP plug ──────────────────────────────────────
 
 program

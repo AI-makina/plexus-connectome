@@ -165,6 +165,17 @@ export function buildBrief(req: BriefRequest, simulator: ImpactSimulator): Brief
         return shown.join(', ') + more;
     };
 
+    // Maturity header (Roadmap 1.3): a provisional brain must SAY it is
+    // provisional — mandatory consultation of a wrong/stale brain amplifies
+    // error, so the wording itself is the first gate.
+    let maturityLine = '';
+    try {
+        const { computeUtilization } = require('./utilization');
+        const u = computeUtilization();
+        maturityLine = `map: ${u.maturity.toUpperCase()} (${u.freshness}` +
+            (u.maturity === 'provisional' ? ` — advisory only: ${u.maturity_reasons[0]}` : '') + ')';
+    } catch { /* utilization must never break a brief */ }
+
     const render = (): string => {
         const lines: string[] = [];
         lines.push(`# PLEXUS CONSULTATION — mode: ${mode}`);
@@ -173,6 +184,7 @@ export function buildBrief(req: BriefRequest, simulator: ImpactSimulator): Brief
             `${stats.amygdala_entries} amygdala ${stats.amygdala_entries === 0 ? '(no incidents recorded yet — healthy)' : 'entries'} · ` +
             `${stats.dormant_nodes} dormant`
         );
+        if (maturityLine) lines.push(maturityLine);
 
         if (targets.length === 0) {
             lines.push('', '## NO TARGETS RESOLVED');

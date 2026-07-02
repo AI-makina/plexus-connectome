@@ -1,4 +1,4 @@
-import { Project, SourceFile, Node } from 'ts-morph';
+import { Project, SourceFile, Node, SyntaxKind } from 'ts-morph';
 import { graph } from '../core/graph';
 import { createNode, createSynapse, deterministicNodeId, deterministicSynapseId } from '../core/factories';
 import { PlexusNode, Region, NodeType, AnalysisStatus } from '../types';
@@ -11,6 +11,7 @@ import {
     extractCSSPositioning, extractDOMMeasurements
 } from './parsers';
 import { buildRelationships, resetRelationshipTracking } from './relationships';
+import { analyzeArtifacts } from './artifacts';
 import { getIntegrationPath } from '../core/context';
 import path from 'path';
 
@@ -107,6 +108,15 @@ export class CodeAnalyzer {
             }
         }
 
+        // Phase 2.4: Artifact parsers (Roadmap 1.4) — package.json, Docker,
+        // .env schema, CI pipelines, prisma models, design tokens, styles,
+        // locales. This is where brain_stem/temporal/cerebellum stop starving.
+        console.log('[Analyzer] Parsing artifacts (manifests, schemas, pipelines)...');
+        const artifacts = analyzeArtifacts(this.targetPath);
+        if (artifacts.nodesCreated > 0) {
+            console.log(`[Analyzer] ${artifacts.nodesCreated} artifact nodes from ${artifacts.paths.length} files.`);
+        }
+
         // Phase 2.5: Stale-scan cleanup — scan-origin nodes whose file no longer
         // exists in the discovered set are map facts of a dead map. Explicitly
         // scan-origin ONLY: legacy nodes without origin and all seed/llm/
@@ -119,6 +129,7 @@ export class CodeAnalyzer {
                 discovered.add(f.path);
                 discovered.add('/' + f.path);
             }
+            for (const p of artifacts.paths) discovered.add(p);
             const staleIds: string[] = [];
             for (const node of graph.nodes.values()) {
                 if ((node.metadata as any)?.origin === 'scan' && !discovered.has(node.file_path)) {
@@ -610,6 +621,82 @@ export class CodeAnalyzer {
                 childNodeIds.set(name, node.id);
                 graph.addSynapse(scanSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes' }));
             }
+        }
+
+        // ── Facet extraction (taxonomy v2 §1, engine plan #6) ────────────────
+        // Sub-file concerns living INSIDE this file: a component's toast calls
+        // are a limbic fact, its fetch calls parietal, its localStorage
+        // temporal, its setInterval cerebellum. AST call-expressions ONLY —
+        // never raw regex (the /alert/i → 'amygdala_alerts' lesson). Capped at
+        // ONE facet per (file × FOREIGN region); the anchor keeps its region
+        // and sheds facets, linked via composes so simulation traverses them.
+        const FACETS: { concern: string; region: Region; match: (expr: string) => boolean }[] = [
+            {
+                concern: 'ux-feedback', region: 'limbic_system',
+                match: e => /^toast[.(]|^snackbar[.(]|^notify\(|\.showNotification\(|^confetti\(/.test(e),
+            },
+            {
+                concern: 'persistence', region: 'temporal_lobe',
+                match: e => /^(localStorage|sessionStorage|indexedDB|AsyncStorage)\./.test(e) ||
+                    /^(prisma|redis|db)\.\w+/.test(e) || /^queryClient\./.test(e),
+            },
+            {
+                concern: 'integration', region: 'parietal_lobe',
+                match: e => /^fetch\(/.test(e) || /^axios[.(]/.test(e) || /^new WebSocket\(/.test(e),
+            },
+            {
+                concern: 'background', region: 'cerebellum',
+                match: e => /^setInterval\(/.test(e) || /^new Worker\(/.test(e) ||
+                    /\.schedule\(/.test(e) || /^requestIdleCallback\(/.test(e) || /^queue\.(add|process)\(/.test(e),
+            },
+        ];
+        const facetHits = new Map<string, number[]>(); // concern → lines
+        try {
+            for (const call of sf.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+                const exprText = call.getExpression().getText();
+                const full = exprText + '(';
+                for (const fdef of FACETS) {
+                    if (fdef.match(full)) {
+                        const lines = facetHits.get(fdef.concern) || [];
+                        if (lines.length < 50) lines.push(call.getStartLineNumber());
+                        facetHits.set(fdef.concern, lines);
+                    }
+                }
+            }
+            for (const newExpr of sf.getDescendantsOfKind(SyntaxKind.NewExpression)) {
+                const t = 'new ' + newExpr.getExpression().getText() + '(';
+                for (const fdef of FACETS) {
+                    if (fdef.match(t)) {
+                        const lines = facetHits.get(fdef.concern) || [];
+                        if (lines.length < 50) lines.push(newExpr.getStartLineNumber());
+                        facetHits.set(fdef.concern, lines);
+                    }
+                }
+            }
+        } catch { /* facet detection must never fail a scan */ }
+
+        for (const fdef of FACETS) {
+            const lines = facetHits.get(fdef.concern);
+            if (!lines || lines.length === 0) continue;
+            if (fdef.region === moduleNode.region) continue; // only FOREIGN-region concerns
+            const facetName = `${path.basename(relativePath)}#${fdef.concern}`;
+            const facet = scanNode({
+                name: facetName,
+                type: 'facet',
+                region: fdef.region,
+                file_path: relativePath,
+                line_range: { start: Math.min(...lines), end: Math.max(...lines) },
+                description: `${fdef.concern} concern inside ${path.basename(relativePath)} (${lines.length} call site${lines.length > 1 ? 's' : ''})`,
+                metadata: { parent_node_id: moduleNode.id, concern: fdef.concern, occurrences: lines.slice(0, 20) } as any,
+                tags: ['facet', fdef.concern],
+            });
+            graph.addNode(facet);
+            graph.addSynapse(scanSynapse({
+                source_node_id: moduleNode.id,
+                target_node_id: facet.id,
+                type: 'composes',
+                description: `${moduleNode.name} carries a ${fdef.concern} concern`,
+            }));
         }
 
         // Gather parser outputs for relationship building

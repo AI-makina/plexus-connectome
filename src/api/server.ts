@@ -187,6 +187,13 @@ app.get('/api/regions', (_req, res) => {
     res.json(graph.getRegionStats());
 });
 
+// Utilization & maturity (Roadmap 1.3): is the whole brain being used, and
+// may it gate — or only advise?
+app.get('/api/regions/utilization', (_req, res) => {
+    const { computeUtilization } = require('../core/utilization');
+    res.json(computeUtilization());
+});
+
 app.get('/api/regions/:name', (req, res) => {
     const region = req.params.name as Region;
     const nodes = graph.getRegionNodes(region);

@@ -64,6 +64,10 @@ export class CodeAnalyzer {
 
         console.log(`[Analyzer] Scanning ${this.targetPath}...`);
 
+        // Phase 0: one-time migration — collapse (source, type, target) twin
+        // synapses left by earlier preserve/restore passes on legacy graphs.
+        this.dedupeSynapseTwins();
+
         // Phase 1: Discovery
         const files = discoverFiles(this.targetPath);
         this.status.files_total = files.length;
@@ -111,7 +115,20 @@ export class CodeAnalyzer {
         // Phase 2.4: Artifact parsers (Roadmap 1.4) — package.json, Docker,
         // .env schema, CI pipelines, prisma models, design tokens, styles,
         // locales. This is where brain_stem/temporal/cerebellum stop starving.
+        // Pre-wipe (review-caught): artifact files are never in the ts-morph
+        // set, so without wiping their previous scan nodes first, removed
+        // services/scripts/models/env-vars would live forever (their file
+        // still exists, so stale cleanup never fires).
         console.log('[Analyzer] Parsing artifacts (manifests, schemas, pipelines)...');
+        const priorArtifactPaths = new Set<string>();
+        for (const node of graph.nodes.values()) {
+            if ((node.metadata as any)?.origin === 'scan' && (node.tags || []).includes('artifact')) {
+                priorArtifactPaths.add(node.file_path);
+            }
+        }
+        for (const p of priorArtifactPaths) {
+            preservedSynapses.push(...this.wipeScanNodesForFile(p));
+        }
         const artifacts = analyzeArtifacts(this.targetPath);
         if (artifacts.nodesCreated > 0) {
             console.log(`[Analyzer] ${artifacts.nodesCreated} artifact nodes from ${artifacts.paths.length} files.`);
@@ -211,6 +228,20 @@ export class CodeAnalyzer {
         this.restorePreservedSynapses(preservedSynapses);
         this.calculateCascadeInfluence();
         this.updateHealthMetrics();
+
+        // Reconcile the file's fingerprint (review-caught): /api/verify hints
+        // "re-scan then verify again" — without this update, its own
+        // remediation could never clear 'unreconciled'.
+        try {
+            const integrationDir = getIntegrationPath();
+            const crypto = require('crypto');
+            const fs = require('fs');
+            const fpPath = path.join(integrationDir, 'fingerprints.json');
+            let fingerprints: Record<string, string> = {};
+            try { fingerprints = JSON.parse(fs.readFileSync(fpPath, 'utf8')); } catch { /* first scan */ }
+            fingerprints[relativePath] = crypto.createHash('md5').update(fs.readFileSync(absolutePath)).digest('hex');
+            fs.writeFileSync(fpPath, JSON.stringify(fingerprints, null, 2));
+        } catch { /* context not set (unit contexts) — verify will report unknown */ }
     }
 
     // ─── Wipe & preserve (Roadmap 0.2, reviewed) ─────────────────────
@@ -260,6 +291,7 @@ export class CodeAnalyzer {
     private restorePreservedSynapses(preserved: any[]) {
         let restored = 0;
         let dropped = 0;
+        let twins = 0;
         for (const syn of preserved) {
             const src = graph.nodes.has(syn.source_node_id)
                 ? syn.source_node_id
@@ -268,13 +300,44 @@ export class CodeAnalyzer {
                 ? syn.target_node_id
                 : this.idRemap.get(syn.target_node_id);
             if (src && tgt && graph.nodes.has(src) && graph.nodes.has(tgt)) {
+                // Legacy-twin guard (review-caught): pre-deterministic scan
+                // edges carry UUID ids and look like enrichment. If the fresh
+                // scan already rebuilt the same (source, target, type) under a
+                // deterministic id, the preserved UUID copy is a twin — drop it
+                // instead of doubling every legacy edge on each re-scan.
+                if (!String(syn.id).startsWith('sy-') && graph.synapses.has(deterministicSynapseId(src, tgt, syn.type))) {
+                    twins++;
+                    continue;
+                }
                 graph.addSynapse({ ...syn, source_node_id: src, target_node_id: tgt }); // upsert by id
                 restored++;
             } else {
                 dropped++;
             }
         }
-        if (dropped > 0) console.log(`[Analyzer] ${dropped} synapse(s) dropped (endpoints gone), ${restored} preserved across re-scan.`);
+        if (dropped + twins > 0) console.log(`[Analyzer] restore: ${restored} preserved, ${twins} legacy twins skipped, ${dropped} dropped (endpoints gone).`);
+    }
+
+    // One-time migration: collapse (source, target, type) duplicate edges that
+    // earlier restore passes may have created — keep the deterministic copy.
+    private dedupeSynapseTwins() {
+        const byKey = new Map<string, string[]>();
+        for (const syn of graph.synapses.values()) {
+            const key = `${syn.source_node_id}|${syn.type}|${syn.target_node_id}`;
+            (byKey.get(key) ?? byKey.set(key, []).get(key)!).push(syn.id);
+        }
+        let removed = 0;
+        for (const ids of byKey.values()) {
+            if (ids.length < 2) continue;
+            const keep = ids.find(id => id.startsWith('sy-')) || ids[0];
+            for (const id of ids) {
+                if (id !== keep) {
+                    graph.deleteSynapse(id);
+                    removed++;
+                }
+            }
+        }
+        if (removed > 0) console.log(`[Analyzer] Deduped ${removed} twin synapse(s).`);
     }
 
     public analyzeIncremental() {
@@ -349,14 +412,20 @@ export class CodeAnalyzer {
             outTreeSize.set(nodeId, visited.size - 1);
         }
 
-        // 2. Apply cascade weight to synapses
+        // 2. Apply cascade weight to synapses — IDEMPOTENT (review-caught):
+        // read the true intrinsic strength from metadata if a previous pass
+        // already recorded it; otherwise the preserved-synapse restore would
+        // feed each pass's boosted output back in as input and ratchet every
+        // edge to the 3.0 cap across re-scans.
         for (const syn of graph.synapses.values()) {
             if (syn.status === 'dormant') continue;
 
             const downstreamCount = outTreeSize.get(syn.target_node_id) || 0;
-            const intrinsic = syn.strength || 0.5;
-
             syn.metadata = syn.metadata || {};
+            const intrinsic = (typeof syn.metadata.intrinsic_importance === 'number')
+                ? syn.metadata.intrinsic_importance
+                : (syn.strength || 0.5);
+
             syn.metadata.intrinsic_importance = intrinsic;
             syn.metadata.cascade_influence = downstreamCount;
 

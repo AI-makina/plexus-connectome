@@ -133,6 +133,9 @@ export function analyzeArtifacts(targetPath: string): ArtifactResult {
     for (const envFile of ['.env.example', '.env.sample', '.env.template']) {
         const env = read(envFile);
         if (!env) continue;
+        // The file joins the discovered set even when every var dedupes —
+        // otherwise its own nodes get stale-cleaned on the next scan.
+        if (!result.paths.includes(envFile)) result.paths.push(envFile);
         const existingEnvNames = new Set(
             [...graph.nodes.values()].filter(n => n.type === 'env_var').map(n => n.name)
         );

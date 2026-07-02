@@ -37,7 +37,18 @@ export class ImpactSimulator {
         opts: { dryRun?: boolean } = {},
     ): SimulationResult {
         const blastRadius: Map<string, ImpactNode> = new Map();
-        const queue: { nodeId: string, distance: number, path: string[], currentStrength: number, viaReverse?: boolean }[] = [];
+        // Two traversal modes with distinct semantics (review-corrected):
+        //   forward — downstream effects: what the change TRIGGERS/WRITES to.
+        //   reverse — dependents: what DEPENDS ON the changed node. Dependents
+        //     continue REVERSE (their own dependents are transitively affected)
+        //     and descend their composes children (the consuming symbols inside
+        //     an importer file) — but they never re-expand forward through
+        //     their own dependency edges: an importer's OTHER imports are its
+        //     upstream, not this change's blast (verified false-positive class).
+        const queue: {
+            nodeId: string, distance: number, path: string[], currentStrength: number,
+            viaSynId: string, mode: 'forward' | 'reverse', reverseHopType?: string,
+        }[] = [];
 
         for (const sourceId of sourceNodeIds) {
             const startNode = graph.nodes.get(sourceId);
@@ -53,17 +64,14 @@ export class ImpactSimulator {
                             nodeId: syn.target_node_id,
                             distance: 1,
                             path: [sourceId, syn.target_node_id],
-                            currentStrength: syn.strength
+                            currentStrength: syn.strength,
+                            viaSynId: syn.id,
+                            mode: 'forward',
                         });
                     }
                 }
 
                 // For "modify" changes: also follow INCOMING edges in reverse.
-                // When node A is modified, every node B that depends on /
-                // invokes / reads from A is affected. Family-based (Roadmap
-                // 1.2): the old 4-type whitelist never fired on real scanned
-                // graphs — the scanner emits imports/renders/calls/composes,
-                // none of which were listed, so the physics was latent.
                 if (changeType === 'modify') {
                     for (const inSynId of adj.in) {
                         const syn = graph.synapses.get(inSynId);
@@ -77,7 +85,9 @@ export class ImpactSimulator {
                                     distance: 1,
                                     path: [sourceId, syn.source_node_id],
                                     currentStrength: syn.strength,
-                                    viaReverse: true
+                                    viaSynId: syn.id,
+                                    mode: 'reverse',
+                                    reverseHopType: syn.type,
                                 });
                             }
                         }
@@ -89,17 +99,16 @@ export class ImpactSimulator {
         const importTimeBindings: { source: string, target: string, synId: string }[] = [];
 
         while (queue.length > 0) {
-            const { nodeId, distance, path, currentStrength, viaReverse } = queue.shift()!;
+            const { nodeId, distance, path, currentStrength, viaSynId, mode, reverseHopType } = queue.shift()!;
             const node = graph.nodes.get(nodeId);
             if (!node || node.status === 'dormant') continue;
             // The sources ARE the change — they are never their own blast.
             if (sourceNodeIds.includes(nodeId)) continue;
 
-            // Check the synapse that carried the impact here (searches BOTH
-            // directions — reverse-traversed hops used to always miss and get
-            // multiplier 1.0, so stale-binding physics never applied to them)
-            const incomingSynId = path.length >= 2 ? this.findSynapse(path[path.length - 2], nodeId) : null;
-            const incomingSyn = incomingSynId ? graph.synapses.get(incomingSynId) : null;
+            // The EXACT synapse that carried the impact rides in the queue —
+            // re-deriving it by endpoint pair picked an arbitrary parallel edge
+            // and silently misattributed family/binding physics.
+            const incomingSyn = graph.synapses.get(viaSynId) || null;
             const btMultiplier = incomingSyn ? bindingTimeMultiplier(incomingSyn.metadata?.binding_time) : 1.0;
             const family = incomingSyn ? familyOf(incomingSyn.type) : 'DEPENDS_ON';
 
@@ -108,7 +117,7 @@ export class ImpactSimulator {
                 importTimeBindings.push({
                     source: path[path.length - 2],
                     target: nodeId,
-                    synId: incomingSynId!
+                    synId: viaSynId
                 });
             }
 
@@ -146,24 +155,66 @@ export class ImpactSimulator {
                 });
 
                 const adj = graph.adjacency.get(nodeId);
-                if (adj) {
+                if (adj && mode === 'forward') {
+                    // Downstream propagation: everything this node feeds.
                     for (const outSynId of adj.out) {
                         const syn = graph.synapses.get(outSynId);
                         if (syn && syn.status !== 'dormant') {
-                            // Containment echo guard: a node reached in REVERSE
-                            // (a reader/container of the modified node) must not
-                            // re-expand DOWN through its other composes edges —
-                            // the modified symbol's siblings are not its blast.
-                            if (viaReverse && syn.type === 'composes') continue;
                             queue.push({
                                 nodeId: syn.target_node_id,
                                 distance: distance + 1,
                                 path: [...path, syn.target_node_id],
                                 currentStrength: syn.strength,
-                                viaReverse
+                                viaSynId: syn.id,
+                                mode: 'forward',
                             });
                         }
                     }
+                } else if (adj && mode === 'reverse') {
+                    // (a) Transitive dependents: whoever depends on THIS
+                    // dependent is also affected (the old depth-1 seeding
+                    // missed importers-of-importers entirely).
+                    for (const inSynId of adj.in) {
+                        const syn = graph.synapses.get(inSynId);
+                        if (syn && syn.status !== 'dormant') {
+                            const originalType = (syn.metadata as any)?.original_type;
+                            if (reverseTraversesOnModify(syn.type, originalType)) {
+                                queue.push({
+                                    nodeId: syn.source_node_id,
+                                    distance: distance + 1,
+                                    path: [...path, syn.source_node_id],
+                                    currentStrength: syn.strength,
+                                    viaSynId: syn.id,
+                                    mode: 'reverse',
+                                    reverseHopType: syn.type,
+                                });
+                            }
+                        }
+                    }
+                    // (b) Containment descent: an importer module's own symbols
+                    // are the actual consumers — include them. EXCEPT when this
+                    // node was reached as the PARENT of the modified symbol
+                    // (reverse composes hop): descending there would flag the
+                    // modified symbol's unrelated siblings.
+                    if (reverseHopType !== 'composes') {
+                        for (const outSynId of adj.out) {
+                            const syn = graph.synapses.get(outSynId);
+                            if (syn && syn.status !== 'dormant' && syn.type === 'composes') {
+                                queue.push({
+                                    nodeId: syn.target_node_id,
+                                    distance: distance + 1,
+                                    path: [...path, syn.target_node_id],
+                                    currentStrength: syn.strength,
+                                    viaSynId: syn.id,
+                                    mode: 'reverse',
+                                    reverseHopType: 'composes',
+                                });
+                            }
+                        }
+                    }
+                    // (c) NEVER forward-expand a dependent through its own
+                    // dependency edges — those are its upstream, not this
+                    // change's blast (the verified sideways-explosion class).
                 }
             }
         }
@@ -212,28 +263,6 @@ export class ImpactSimulator {
         }
 
         return result;
-    }
-
-    private findSynapse(sourceId: string, targetId: string): string | null {
-        // Forward edge first (source → target)…
-        const adj = graph.adjacency.get(sourceId);
-        if (adj) {
-            for (const synId of adj.out) {
-                const syn = graph.synapses.get(synId);
-                if (syn && syn.target_node_id === targetId) return synId;
-            }
-        }
-        // …then the reverse edge (target → source): reverse-traversed modify
-        // hops ride the real edge pointing the other way. Without this branch
-        // the binding-time amplifier and family physics never saw them.
-        const tAdj = graph.adjacency.get(targetId);
-        if (tAdj) {
-            for (const synId of tAdj.out) {
-                const syn = graph.synapses.get(synId);
-                if (syn && syn.target_node_id === sourceId) return synId;
-            }
-        }
-        return null;
     }
 
     public simulateRemoval(nodeIds: string[]): SimulationResult {

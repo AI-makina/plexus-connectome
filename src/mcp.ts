@@ -276,10 +276,15 @@ async function handleMessage(line: string) {
     try { msg = JSON.parse(line); } catch { return; }
     const { id, method, params } = msg;
     if (method === 'initialize') {
+        // Version negotiation: echo the client's version only if we actually
+        // support it; otherwise answer with our latest supported version
+        // (per spec — blindly echoing asserts support for anything).
+        const SUPPORTED = ['2024-11-05', '2025-03-26', '2025-06-18'];
+        const requested = params?.protocolVersion;
         send({
             jsonrpc: '2.0', id,
             result: {
-                protocolVersion: params?.protocolVersion || '2024-11-05',
+                protocolVersion: SUPPORTED.includes(requested) ? requested : '2025-06-18',
                 capabilities: { tools: {} },
                 serverInfo: { name: 'plexus', version: '1.0.0' },
                 instructions:

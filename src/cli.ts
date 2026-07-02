@@ -290,8 +290,10 @@ program
         }
         let log = '';
         try {
+            // core.quotepath=false: without it, non-ASCII paths arrive C-quoted
+            // ("src/f\\303\\266o.ts") and silently corrupt co-change keys.
             log = execSync(
-                `git log --pretty=format:'§%H|%s' --name-only -n ${parseInt(options.commits, 10) || 500}`,
+                `git -c core.quotepath=false log --pretty=format:'§%H|%s' --name-only -n ${parseInt(options.commits, 10) || 500}`,
                 { cwd: targetPath, maxBuffer: 32 * 1024 * 1024 }
             ).toString();
         } catch (e: any) {

@@ -106,6 +106,90 @@ program
         console.log(`Analysis complete. Connectome populated.`);
     });
 
+// ─── Evidence Protocol 0.5: git chokepoint (warn-only) ────────────────────────
+
+program
+    .command('hook-check')
+    .description('Warn about staged files that were never consulted (pre-commit; always exits 0)')
+    .option('-p, --path <path>', 'Path to target app', process.cwd())
+    .option('-w, --window <hours>', 'Consultation freshness window in hours', '8')
+    .action((options: any) => {
+        const targetPath = path.resolve(options.path);
+        const integrationPath = path.join(targetPath, 'plexus-integration');
+        if (!fs.existsSync(integrationPath)) return; // Plexus not set up — never block
+
+        try {
+            setContext(integrationPath, targetPath);
+            initDb(integrationPath);
+            graph.loadFromDb();
+
+            // --relative: emit paths relative to targetPath, not the repo root —
+            // without it every monorepo staged path permanently mismatches the
+            // target-relative consultation paths.
+            const staged = execSync('git diff --cached --name-only --relative', { cwd: targetPath })
+                .toString().split('\n').map(s => s.trim()).filter(Boolean)
+                .filter(f => !f.startsWith('plexus-integration/'));
+            if (staged.length === 0) return;
+
+            const windowHours = parseFloat(options.window) || 8;
+            const since = new Date(Date.now() - windowHours * 3600 * 1000).toISOString();
+            // Late import keeps CLI startup cheap for other commands
+            const { getConsultationsSince } = require('./core/session');
+            const consultations = getConsultationsSince(since);
+
+            // Everything consulted recently: explicit file paths + the files of
+            // every consulted node id.
+            const consultedFiles = new Set<string>();
+            for (const c of consultations) {
+                for (const fp of c.file_paths) consultedFiles.add(fp.replace(/^\.?\//, ''));
+                for (const id of c.node_ids) {
+                    const node = graph.nodes.get(id);
+                    if (node) consultedFiles.add(node.file_path.replace(/^\.?\//, ''));
+                }
+            }
+
+            const unconsulted = staged.filter(f => !consultedFiles.has(f.replace(/^\.?\//, '')));
+            if (unconsulted.length > 0) {
+                console.warn('');
+                console.warn('⬡ PLEXUS — unconsulted changes (warn-only):');
+                for (const f of unconsulted) console.warn(`   · ${f}`);
+                console.warn(`   ${unconsulted.length}/${staged.length} staged file(s) had no consultation in the last ${windowHours}h.`);
+                console.warn('   Consult before changing: POST /api/consult {"file_paths":[...]} — or claim-check the symbols you rely on.');
+                console.warn('');
+            }
+        } catch {
+            // The hook must never break a commit — warn-only by design.
+        }
+        process.exit(0);
+    });
+
+program
+    .command('hook-install')
+    .description('Install the warn-only pre-commit consultation check into .git/hooks')
+    .option('-p, --path <path>', 'Path to target app', process.cwd())
+    .option('-f, --force', 'Overwrite an existing pre-commit hook')
+    .action((options: any) => {
+        const targetPath = path.resolve(options.path);
+        const hooksDir = path.join(targetPath, '.git', 'hooks');
+        if (!fs.existsSync(hooksDir)) {
+            console.error('No .git/hooks directory — is this a git repository?');
+            process.exit(1);
+        }
+        const hookPath = path.join(hooksDir, 'pre-commit');
+        if (fs.existsSync(hookPath) && !options.force) {
+            console.error('A pre-commit hook already exists. Re-run with --force to overwrite, or add this line to it:');
+            console.error(`  node "${path.join(__dirname, 'cli.js')}" hook-check -p "${targetPath}"`);
+            process.exit(1);
+        }
+        const script = `#!/bin/sh
+# Plexus Evidence Protocol — warn-only consultation check (never blocks)
+node "${path.join(__dirname, 'cli.js')}" hook-check -p "${targetPath}"
+exit 0
+`;
+        fs.writeFileSync(hookPath, script, { mode: 0o755 });
+        console.log(`Installed warn-only pre-commit hook at ${hookPath}`);
+    });
+
 program
     .command('serve')
     .description('Start the Plexus API and Visualization servers')

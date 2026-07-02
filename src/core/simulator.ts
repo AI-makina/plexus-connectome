@@ -30,7 +30,11 @@ function bindingTimeMultiplier(bindingTime?: string): number {
 export class ImpactSimulator {
     private history: SimulationResult[] = [];
 
-    public simulate(sourceNodeIds: string[], changeType: string): SimulationResult {
+    public simulate(
+        sourceNodeIds: string[],
+        changeType: string,
+        opts: { dryRun?: boolean } = {},
+    ): SimulationResult {
         const blastRadius: Map<string, ImpactNode> = new Map();
         const queue: { nodeId: string, distance: number, path: string[], currentStrength: number }[] = [];
 
@@ -177,9 +181,13 @@ export class ImpactSimulator {
             recommendation
         };
 
-        this.history.push(result);
-        this.persistResult(result);
-        graph.saveSimulationReport(result);
+        // dryRun (consultation briefs): pure computation — no history entry,
+        // no simulation_history row, no impact-report file on disk.
+        if (!opts.dryRun) {
+            this.history.push(result);
+            this.persistResult(result);
+            graph.saveSimulationReport(result);
+        }
 
         return result;
     }

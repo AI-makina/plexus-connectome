@@ -5,6 +5,8 @@ import { setContext, setManifest } from './core/context';
 import { CodeAnalyzer } from './analyzer';
 import { ImpactSimulator } from './core/simulator';
 import { PlexusManifest } from './types';
+import { initSession, isAuthDisabled } from './core/session';
+import { validateCommand, validateAndBuildNode, validateAndBuildSynapse, validateAndBuildAmygdala, validateNodeInput, validateSynapseInput } from './core/validate';
 import fs from 'fs';
 import path from 'path';
 import express from 'express';
@@ -43,28 +45,108 @@ simulator.loadHistory();
 const analyzer = new CodeAnalyzer(targetAppPath);
 setAnalyzerRef(analyzer);
 
-// 7. Command Processor
+// 6.5 Session: per-boot capability token (plexus-integration/session-token)
+const sessionToken = initSession(integrationPath);
+if (isAuthDisabled()) {
+    console.warn('[Plexus Engine] ⚠ PLEXUS_NO_AUTH=1 — write authentication is DISABLED');
+} else {
+    console.log(`[Plexus Engine] Session token written to plexus-integration/session-token (${sessionToken.slice(0, 8)}…)`);
+}
+
+// 7. Command Processor — Evidence Protocol 0.1 hardening:
+//    · every command is schema-validated + policy-checked BEFORE any mutation
+//    · failures are quarantined to plexus-commands-failed.json instead of
+//      permanently re-running (a malformed log_amygdala used to become a
+//      poison command that crashed state writes until restart)
+//    · one bad command never blocks the rest of the batch
 const commandsFile = path.join(integrationPath, 'plexus-commands.json');
+const failedCommandsFile = path.join(integrationPath, 'plexus-commands-failed.json');
+let processingCommands = false;
+
+function applyCommand(action: string, data: any): { ok: boolean; errors?: string[] } {
+    switch (action) {
+        case 'add_node': {
+            const v = validateAndBuildNode(data, 'command');
+            if (!v.ok) return { ok: false, errors: v.errors };
+            graph.addNode(v.value);
+            return { ok: true };
+        }
+        case 'add_synapse': {
+            const v = validateAndBuildSynapse(data);
+            if (!v.ok) return { ok: false, errors: v.errors };
+            graph.addSynapse(v.value);
+            return { ok: true };
+        }
+        case 'log_amygdala': {
+            const v = validateAndBuildAmygdala(data);
+            if (!v.ok) return { ok: false, errors: v.errors };
+            graph.addAmygdalaEntry(v.value);
+            return { ok: true };
+        }
+        case 'update_node': {
+            const existing = graph.nodes.get(data.id);
+            if (!existing) return { ok: false, errors: [`node '${data.id}' not found`] };
+            const v = validateNodeInput(data, { partial: true, existingRegion: existing.region });
+            if (!v.ok) return { ok: false, errors: v.errors };
+            return graph.updateNode(data.id, data) ? { ok: true } : { ok: false, errors: [`node '${data.id}' not found`] };
+        }
+        case 'delete_node':
+            return graph.deleteNode(data.id) ? { ok: true } : { ok: false, errors: [`node '${data.id}' not found`] };
+        case 'update_synapse': {
+            const v = validateSynapseInput(data, { partial: true });
+            if (!v.ok) return { ok: false, errors: v.errors };
+            return graph.updateSynapse(data.id, data) ? { ok: true } : { ok: false, errors: [`synapse '${data.id}' not found`] };
+        }
+        case 'delete_synapse':
+            return graph.deleteSynapse(data.id) ? { ok: true } : { ok: false, errors: [`synapse '${data.id}' not found`] };
+        default:
+            return { ok: false, errors: [`unknown action '${action}'`] };
+    }
+}
+
 function processCommands() {
-    if (!fs.existsSync(commandsFile)) return;
+    if (!fs.existsSync(commandsFile) || processingCommands) return;
+    processingCommands = true;
     try {
         const raw = fs.readFileSync(commandsFile, 'utf8');
         const data = JSON.parse(raw);
         if (data && Array.isArray(data.commands) && data.commands.length > 0) {
             console.log(`Processing ${data.commands.length} commands...`);
+            const failures: any[] = [];
+
             for (const cmd of data.commands) {
-                if (cmd.action === 'add_node') graph.addNode(cmd.data);
-                if (cmd.action === 'add_synapse') graph.addSynapse(cmd.data);
-                if (cmd.action === 'log_amygdala') graph.addAmygdalaEntry(cmd.data);
-                if (cmd.action === 'update_node') graph.updateNode(cmd.data.id, cmd.data);
-                if (cmd.action === 'delete_node') graph.deleteNode(cmd.data.id);
-                if (cmd.action === 'update_synapse') graph.updateSynapse(cmd.data.id, cmd.data);
-                if (cmd.action === 'delete_synapse') graph.deleteSynapse(cmd.data.id);
+                const shape = validateCommand(cmd);
+                if (!shape.ok) {
+                    failures.push({ command: cmd, errors: shape.errors, failed_at: new Date().toISOString() });
+                    continue;
+                }
+                try {
+                    const applied = applyCommand(shape.value.action, shape.value.data);
+                    if (!applied.ok) {
+                        failures.push({ command: cmd, errors: applied.errors, failed_at: new Date().toISOString() });
+                    }
+                } catch (err: any) {
+                    failures.push({ command: cmd, errors: [err.message], failed_at: new Date().toISOString() });
+                }
             }
+
+            // Always clear the queue — failures move to the quarantine file so
+            // they can be inspected/fixed without blocking future commands.
             fs.writeFileSync(commandsFile, JSON.stringify({ commands: [] }, null, 2));
+            if (failures.length > 0) {
+                let existing: any[] = [];
+                try {
+                    const prev = JSON.parse(fs.readFileSync(failedCommandsFile, 'utf8'));
+                    if (Array.isArray(prev)) existing = prev;
+                } catch { /* no quarantine file yet */ }
+                fs.writeFileSync(failedCommandsFile, JSON.stringify([...existing, ...failures], null, 2));
+                console.warn(`[Plexus Engine] ⚠ ${failures.length} command(s) rejected → plexus-commands-failed.json`);
+            }
         }
     } catch (err) {
         console.error('Error processing commands:', err);
+    } finally {
+        processingCommands = false;
     }
 }
 
@@ -86,8 +168,9 @@ fs.watch(commandsFile, (eventType) => {
     }
 });
 
-// Start Backend Server
-app.listen(PORT as number, '0.0.0.0', () => {
+// Start Backend Server — 127.0.0.1 ONLY. The previous 0.0.0.0 bind exposed an
+// unauthenticated graph-mutation API to the entire LAN.
+app.listen(PORT as number, '127.0.0.1', () => {
     console.log(`[Plexus Engine] API Server running on port ${PORT}`);
     console.log(`[Plexus Engine] Integration Path: ${integrationPath}`);
 });
@@ -108,7 +191,7 @@ uiApp.use((req, res, next) => {
 uiApp.use(express.static(uiPath));
 uiApp.use((_req, res) => res.sendFile(path.join(uiPath, 'index.html')));
 
-uiApp.listen(UI_PORT as number, '0.0.0.0', () => {
+uiApp.listen(UI_PORT as number, '127.0.0.1', () => {
     console.log(`[Plexus Engine] UI Server running on port ${UI_PORT}`);
     // Only auto-open browser if not launched by a parent process (e.g., Areopagus)
     if (!process.env.PLEXUS_NO_OPEN) {

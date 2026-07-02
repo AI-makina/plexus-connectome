@@ -1,5 +1,5 @@
 import { graph } from '../core/graph';
-import { createSynapse } from '../core/factories';
+import { createSynapse, deterministicSynapseId } from '../core/factories';
 import { PlexusNode, SynapseType } from '../types';
 import { ExtractedImport, ExtractedExport, ExtractedCallSite, ExtractedHook } from './parsers';
 
@@ -160,6 +160,9 @@ function addSynapseIfNew(sourceId: string, targetId: string, type: SynapseType, 
     addedSynapses.add(key);
 
     graph.addSynapse(createSynapse({
+        // Deterministic id (Roadmap 0.2): with deterministic node ids, the same
+        // relationship re-derives the same synapse id — re-scans upsert.
+        id: deterministicSynapseId(sourceId, targetId, type),
         source_node_id: sourceId,
         target_node_id: targetId,
         type,

@@ -139,7 +139,20 @@ class ConnectomeGraph {
         const existing = this.nodes.get(id);
         if (!existing) return null;
 
-        const updated: PlexusNode = { ...existing, ...updates, id, updated_at: new Date().toISOString() };
+        // Metadata merges (a partial update must not wholesale-erase fields),
+        // and provenance is immutable: origin survives every update, and
+        // created_at can never be rewritten by an update payload.
+        const mergedMetadata: any = { ...(existing.metadata || {}), ...(updates.metadata || {}) };
+        const existingOrigin = (existing.metadata as any)?.origin;
+        if (existingOrigin !== undefined) mergedMetadata.origin = existingOrigin;
+
+        const updated: PlexusNode = {
+            ...existing, ...updates,
+            id,
+            metadata: mergedMetadata,
+            created_at: existing.created_at,
+            updated_at: new Date().toISOString(),
+        };
         updated.code = updated.code || existing.code || `ND-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
         updated.status = updated.status || existing.status || 'active';
 

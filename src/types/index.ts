@@ -34,6 +34,16 @@ export interface NodePosition {
 }
 
 export interface NodeMetadata {
+    /**
+     * Provenance plane — the governing axis of trust (Evidence Protocol):
+     * - 'scan':    map fact, derived by the analyzer; replaceable by re-scans.
+     * - 'seed':    genesis-planned; survives re-scans (reconciled by file+name).
+     * - 'llm':     belief fact proposed by an AI; decays, seeks confirmation.
+     * - 'incident': born from the failure loop; append-only.
+     * - 'command': written via the REST API / command queue by an external agent.
+     * Absent on legacy nodes — treated as 'scan' by re-scan replacement logic.
+     */
+    origin?: 'scan' | 'seed' | 'llm' | 'incident' | 'command';
     language?: string;
     framework?: string;
     exports?: string[];

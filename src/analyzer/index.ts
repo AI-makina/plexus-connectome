@@ -1,6 +1,6 @@
 import { Project, SourceFile, Node } from 'ts-morph';
 import { graph } from '../core/graph';
-import { createNode, createSynapse } from '../core/factories';
+import { createNode, createSynapse, deterministicNodeId, deterministicSynapseId } from '../core/factories';
 import { PlexusNode, Region, NodeType, AnalysisStatus } from '../types';
 import { classifyRegion } from './classifier';
 import { discoverFiles, saveFingerprints, loadFingerprints, getChangedFiles } from './discovery';
@@ -82,7 +82,13 @@ export class CodeAnalyzer {
         const initialNodeCount = graph.nodes.size;
         const initialSynapseCount = graph.synapses.size;
 
-        // Phase 2: Parse each file → create nodes
+        // Phase 2: Parse each file → wipe stale scan facts, then create nodes.
+        // The per-file wipe uses the SAME origin rule as analyzeFile (undefined
+        // counts as scan) — without it, a legacy UUID connectome would keep its
+        // old scan nodes alongside the new deterministic-id ones, permanently
+        // doubling every symbol on first analyze. Synapses attached to wiped
+        // nodes are preserved and restored after the rebuild (see helper docs).
+        const preservedSynapses: any[] = [];
         for (let i = 0; i < sourceFiles.length; i++) {
             const sf = sourceFiles[i];
             const absolutePath = sf.getFilePath();
@@ -93,6 +99,7 @@ export class CodeAnalyzer {
             this.status.progress = Math.round(((i + 1) / sourceFiles.length) * 80); // 0-80%
 
             try {
+                preservedSynapses.push(...this.wipeScanNodesForFile(relativePath));
                 const data = this.processFile(sf, relativePath);
                 analysisMap.set(relativePath, data);
             } catch (err: any) {
@@ -100,11 +107,41 @@ export class CodeAnalyzer {
             }
         }
 
+        // Phase 2.5: Stale-scan cleanup — scan-origin nodes whose file no longer
+        // exists in the discovered set are map facts of a dead map. Explicitly
+        // scan-origin ONLY: legacy nodes without origin and all seed/llm/
+        // incident/command nodes are enrichment and must survive re-scans.
+        // GUARD: if discovery returned nothing (wrong path, fs error), skip —
+        // an empty scan must never mass-delete the map.
+        if (files.length > 0) {
+            const discovered = new Set<string>();
+            for (const f of files) {
+                discovered.add(f.path);
+                discovered.add('/' + f.path);
+            }
+            const staleIds: string[] = [];
+            for (const node of graph.nodes.values()) {
+                if ((node.metadata as any)?.origin === 'scan' && !discovered.has(node.file_path)) {
+                    staleIds.push(node.id);
+                }
+            }
+            // Targeted legacy migration: the old build fabricated this amygdala
+            // placeholder during scans (removed behavior) — clean it up here so
+            // existing connectomes shed it on their first re-analyze.
+            if (graph.nodes.has('AMYGDALA-a98b3c4f')) staleIds.push('AMYGDALA-a98b3c4f');
+            for (const id of staleIds) graph.deleteNode(id);
+            if (staleIds.length > 0) console.log(`[Analyzer] Removed ${staleIds.length} stale scan nodes (files gone).`);
+        }
+
         // Phase 3: Build cross-file relationships
         this.status.progress = 85;
         console.log('[Analyzer] Building cross-file relationships...');
         resetRelationshipTracking();
         buildRelationships(analysisMap);
+
+        // Phase 3.2: Restore preserved synapses (agent-written edges + incoming
+        // scan edges from unprocessed files) — only where both endpoints exist.
+        this.restorePreservedSynapses(preservedSynapses);
 
         // Phase 3.5: Calculate Cascade Influence
         console.log('[Analyzer] Calculating Synapse Cascade Influence...');
@@ -135,16 +172,10 @@ export class CodeAnalyzer {
         const absolutePath = path.isAbsolute(filePath) ? filePath : path.join(this.targetPath, filePath);
         const relativePath = path.relative(this.targetPath, absolutePath);
 
-        // Remove old nodes for this file
-        const oldNodeIds: string[] = [];
-        for (const node of graph.nodes.values()) {
-            if (node.file_path === relativePath || node.file_path === '/' + relativePath) {
-                oldNodeIds.push(node.id);
-            }
-        }
-        for (const id of oldNodeIds) {
-            graph.deleteNode(id); // cascades synapses
-        }
+        // Remove old SCAN nodes for this file — origin-aware (Roadmap 0.2):
+        // re-scans may only replace map facts; synapses touching them are
+        // preserved and restored after the rebuild.
+        const preservedSynapses = this.wipeScanNodesForFile(relativePath);
 
         // Re-analyze the single file
         let sf: SourceFile;
@@ -166,8 +197,73 @@ export class CodeAnalyzer {
 
         resetRelationshipTracking();
         buildRelationships(analysisMap);
+        this.restorePreservedSynapses(preservedSynapses);
         this.calculateCascadeInfluence();
         this.updateHealthMetrics();
+    }
+
+    // ─── Wipe & preserve (Roadmap 0.2, reviewed) ─────────────────────
+    // Deleting a node cascades ALL its synapses regardless of who wrote them.
+    // Since scan nodes are recreated under the SAME deterministic ids, we
+    // preserve every attached synapse before the wipe and re-add each one
+    // whose endpoints exist after the rebuild:
+    //   · agent/command/LLM edges (uuid ids) survive re-scans — the origin
+    //     contract ("enrichment survives") holds for edges, not just nodes
+    //   · incoming scan edges from OTHER files ('sy-' ids) survive per-file
+    //     re-scans (they are not rebuilt by a single-file analysis)
+    //   · edges to symbols that genuinely disappeared are dropped (endpoints
+    //     missing), which is the correct fate for dead map facts
+    // idRemap accumulates oldId → deterministic id for every wiped node, so a
+    // preserved edge whose endpoint was a LEGACY UUID scan node can be re-keyed
+    // to the node's deterministic successor instead of being dropped.
+    private idRemap = new Map<string, string>();
+
+    private wipeScanNodesForFile(relativePath: string): any[] {
+        const oldNodeIds: string[] = [];
+        for (const node of graph.nodes.values()) {
+            if (node.file_path === relativePath || node.file_path === '/' + relativePath) {
+                const origin = (node.metadata as any)?.origin;
+                if (origin === undefined || origin === 'scan') {
+                    oldNodeIds.push(node.id);
+                    this.idRemap.set(node.id, deterministicNodeId(relativePath, node.type, node.name));
+                }
+            }
+        }
+        const preserved: any[] = [];
+        const seen = new Set<string>();
+        for (const id of oldNodeIds) {
+            const conns = graph.getNodeConnections(id);
+            for (const syn of [...conns.incoming, ...conns.outgoing]) {
+                if (!seen.has(syn.id)) {
+                    seen.add(syn.id);
+                    preserved.push({ ...syn });
+                }
+            }
+        }
+        for (const id of oldNodeIds) {
+            graph.deleteNode(id); // cascades synapses (preserved above)
+        }
+        return preserved;
+    }
+
+    private restorePreservedSynapses(preserved: any[]) {
+        let restored = 0;
+        let dropped = 0;
+        for (const syn of preserved) {
+            const src = graph.nodes.has(syn.source_node_id)
+                ? syn.source_node_id
+                : this.idRemap.get(syn.source_node_id);
+            const tgt = graph.nodes.has(syn.target_node_id)
+                ? syn.target_node_id
+                : this.idRemap.get(syn.target_node_id);
+            if (src && tgt && graph.nodes.has(src) && graph.nodes.has(tgt)) {
+                graph.addSynapse({ ...syn, source_node_id: src, target_node_id: tgt }); // upsert by id
+                restored++;
+            } else {
+                dropped++;
+            }
+        }
+        if (dropped > 0) console.log(`[Analyzer] ${dropped} synapse(s) dropped (endpoints gone), ${restored} preserved across re-scan.`);
     }
 
     public analyzeIncremental() {
@@ -268,9 +364,21 @@ export class CodeAnalyzer {
     private processFile(sf: SourceFile, relativePath: string): FileAnalysisData {
         const content = sf.getFullText();
 
+        // Scanner-origin creation helpers: deterministic ids (stable across
+        // re-scans) + provenance stamping (origin: 'scan') on every element.
+        const scanNode: typeof createNode = (partial) => createNode({
+            ...partial,
+            id: partial.id || deterministicNodeId(relativePath, partial.type, partial.name),
+            metadata: { origin: 'scan', ...(partial.metadata || {}) },
+        });
+        const scanSynapse: typeof createSynapse = (partial) => createSynapse({
+            ...partial,
+            id: partial.id || deterministicSynapseId(partial.source_node_id, partial.target_node_id, partial.type),
+        });
+
         // Create module node
         const moduleRegion = classifyRegion(relativePath, 'module', content);
-        const moduleNode = createNode({
+        const moduleNode = scanNode({
             name: path.basename(relativePath),
             type: 'module',
             region: moduleRegion,
@@ -289,7 +397,7 @@ export class CodeAnalyzer {
         // Extract React components
         const components = extractReactComponents(sf);
         for (const comp of components) {
-            const node = createNode({
+            const node = scanNode({
                 name: comp.name,
                 type: 'component',
                 region: classifyRegion(relativePath, 'component', content),
@@ -301,7 +409,7 @@ export class CodeAnalyzer {
             });
             graph.addNode(node);
             childNodeIds.set(comp.name, node.id);
-            graph.addSynapse(createSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes', description: `${moduleNode.name} contains ${comp.name}` }));
+            graph.addSynapse(scanSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes', description: `${moduleNode.name} contains ${comp.name}` }));
         }
 
         // Extract hooks
@@ -313,7 +421,7 @@ export class CodeAnalyzer {
                 const fnDef = sf.getFunction(hook.name);
                 if (fnDef) {
                     seenHookDefs.add(hook.name);
-                    const node = createNode({
+                    const node = scanNode({
                         name: hook.name,
                         type: 'hook',
                         region: classifyRegion(relativePath, 'hook', content),
@@ -324,7 +432,7 @@ export class CodeAnalyzer {
                     });
                     graph.addNode(node);
                     childNodeIds.set(hook.name, node.id);
-                    graph.addSynapse(createSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes', description: `${moduleNode.name} defines ${hook.name}` }));
+                    graph.addSynapse(scanSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes', description: `${moduleNode.name} defines ${hook.name}` }));
                 }
             }
         }
@@ -332,7 +440,7 @@ export class CodeAnalyzer {
         // Extract route handlers
         const routes = extractRouteHandlers(sf);
         for (const route of routes) {
-            const node = createNode({
+            const node = scanNode({
                 name: `${route.method} ${route.pattern}`,
                 type: 'endpoint',
                 region: classifyRegion(relativePath, 'endpoint', content),
@@ -344,13 +452,13 @@ export class CodeAnalyzer {
             });
             graph.addNode(node);
             childNodeIds.set(route.handlerName, node.id);
-            graph.addSynapse(createSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes', description: `${moduleNode.name} defines ${route.method} ${route.pattern}` }));
+            graph.addSynapse(scanSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes', description: `${moduleNode.name} defines ${route.method} ${route.pattern}` }));
         }
 
         // Extract types and interfaces
         const types = extractTypesAndInterfaces(sf);
         for (const t of types) {
-            const node = createNode({
+            const node = scanNode({
                 name: t.name,
                 type: t.kind,
                 region: classifyRegion(relativePath, t.kind, content),
@@ -361,53 +469,30 @@ export class CodeAnalyzer {
             });
             graph.addNode(node);
             childNodeIds.set(t.name, node.id);
-            graph.addSynapse(createSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes', description: `${moduleNode.name} defines ${t.name}` }));
+            graph.addSynapse(scanSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes', description: `${moduleNode.name} defines ${t.name}` }));
         }
 
 
 
-        // --- CSS/JS Rendering Simulator (Active Static Analysis) ---
-        // Scan for Viewport vs Absolute Rendering Desync Vulnerabilities
+        // NOTE (Evidence Protocol): the scanner is RECALL-ONLY for the amygdala.
+        // The previous hardcoded a98b3c4f detector fabricated an amygdala node
+        // during scan — violating both the incident-only rule and the region
+        // policy (nodes may never claim region 'amygdala'), and its strength-3.0
+        // warning edge silently inflated blast radii. Removed. Phase 1.6 brings
+        // the generalized replacement: code_signatures declared on EXISTING
+        // amygdala entries fire amygdala_warning synapses that point at the
+        // entry's trigger nodes — the scanner recalls memory, never mints it.
         const cssPos = extractCSSPositioning(sf);
         const domMath = extractDOMMeasurements(sf);
-
         if (cssPos.length > 0 && domMath.length > 0) {
-            // Document contains both absolute/fixed positioning AND viewport math.
-            // This is the identical signature to Amygdala bug a98b3c4f.
-            const warningNodeId = 'AMYGDALA-a98b3c4f';
-
-            // Check if the warning node exists (it won't on first run, so create a placeholder)
-            if (!graph.nodes.has(warningNodeId)) {
-                const amygdalaNode = createNode({
-                    id: warningNodeId,
-                    name: 'Viewport Coordinates vs. Absolute Positioning Rendering Desync',
-                    type: 'config',
-                    region: 'amygdala',
-                    file_path: 'amygdala-log.json',
-                    description: 'Amygdala Entry a98b3c4f: The math uses getBoundingClientRect() which is strictly viewport-relative, but it applies to a position: absolute/fixed element.',
-                    tags: ['critical', 'amygdala'],
-                    metadata: {}
-                });
-                graph.addNode(amygdalaNode);
-            }
-
-            // Create a warning synapse alerting the developer to the risk
-            graph.addSynapse(createSynapse({
-                source_node_id: moduleNode.id,
-                target_node_id: warningNodeId,
-                type: 'amygdala_warning',
-                description: `CRITICAL RISK: ${moduleNode.name} mixes getBoundingClientRect() and position:${cssPos[0].property}. Prevent rendering desyncs by using position:fixed or injecting window.scrollY.`,
-                strength: 3.0 // Max strength for critical warning
-            }));
-
-            console.log(`[Plexus Simulator] ⚠️ WARNING INJECTED: Detected CSS/JS Render Desync signature in ${moduleNode.name}`);
+            console.log(`[Analyzer] Signature note: ${moduleNode.name} mixes getBoundingClientRect() with position:${cssPos[0].property} — candidate for an amygdala code_signature (Phase 1.6).`);
         }
 
         // Extract env vars
         const envVars = extractEnvVars(sf);
         for (const ev of envVars) {
             if (!childNodeIds.has(`env:${ev.name}`)) {
-                const node = createNode({
+                const node = scanNode({
                     name: ev.name,
                     type: 'env_var',
                     region: 'brain_stem',
@@ -427,7 +512,7 @@ export class CodeAnalyzer {
             if (!name || childNodeIds.has(name)) continue;
             const isHook = name.startsWith('use') && /^use[A-Z]/.test(name);
             const nodeType: NodeType = isHook ? 'hook' : 'function';
-            const node = createNode({
+            const node = scanNode({
                 name,
                 type: nodeType,
                 region: classifyRegion(relativePath, nodeType, content),
@@ -437,13 +522,13 @@ export class CodeAnalyzer {
             });
             graph.addNode(node);
             childNodeIds.set(name, node.id);
-            graph.addSynapse(createSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes' }));
+            graph.addSynapse(scanSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes' }));
         }
 
         for (const cls of sf.getClasses()) {
             const name = cls.getName();
             if (!name || childNodeIds.has(name)) continue;
-            const node = createNode({
+            const node = scanNode({
                 name,
                 type: 'class',
                 region: classifyRegion(relativePath, 'class', content),
@@ -453,7 +538,7 @@ export class CodeAnalyzer {
             });
             graph.addNode(node);
             childNodeIds.set(name, node.id);
-            graph.addSynapse(createSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes' }));
+            graph.addSynapse(scanSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes' }));
         }
 
         // Arrow function variable declarations (configs, arrow functions)
@@ -467,7 +552,7 @@ export class CodeAnalyzer {
                 const isHook = name.startsWith('use') && /^use[A-Z]/.test(name);
                 const isComp = /^[A-Z]/.test(name) && containsJSXText(init.getText());
                 const nodeType: NodeType = isHook ? 'hook' : isComp ? 'component' : 'function';
-                const node = createNode({
+                const node = scanNode({
                     name,
                     type: nodeType,
                     region: classifyRegion(relativePath, nodeType, content),
@@ -477,9 +562,9 @@ export class CodeAnalyzer {
                 });
                 graph.addNode(node);
                 childNodeIds.set(name, node.id);
-                graph.addSynapse(createSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes' }));
+                graph.addSynapse(scanSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes' }));
             } else if (Node.isObjectLiteralExpression(init)) {
-                const node = createNode({
+                const node = scanNode({
                     name,
                     type: 'config',
                     region: classifyRegion(relativePath, 'config', content),
@@ -489,7 +574,7 @@ export class CodeAnalyzer {
                 });
                 graph.addNode(node);
                 childNodeIds.set(name, node.id);
-                graph.addSynapse(createSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes' }));
+                graph.addSynapse(scanSynapse({ source_node_id: moduleNode.id, target_node_id: node.id, type: 'composes' }));
             }
         }
 

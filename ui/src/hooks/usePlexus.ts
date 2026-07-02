@@ -7,6 +7,47 @@ import { REGIONS } from '../theme/regions';
 const currentPort = parseInt(window.location.port, 10) || 3201;
 export const API_BASE = `http://localhost:${currentPort - 1}`;
 
+// Evidence Protocol 0.1: mutating calls (simulate, dormant, …) require the
+// per-boot session token. The UI is a local same-machine origin, so it may
+// read GET /api/session; fetched once, then attached to every axios request.
+let sessionTokenPromise: Promise<void> | null = null;
+function ensureSessionToken(): Promise<void> {
+    if (!sessionTokenPromise) {
+        sessionTokenPromise = axios
+            .get(`${API_BASE}/api/session`)
+            .then(res => {
+                if (res.data?.token) {
+                    axios.defaults.headers.common['x-plexus-token'] = res.data.token;
+                }
+            })
+            .catch(() => {
+                sessionTokenPromise = null; // engine down — retry on next fetch
+            });
+    }
+    return sessionTokenPromise;
+}
+
+// The token is per-BOOT: after an engine restart the cached one 401s forever
+// while GET polling keeps succeeding (reads are tokenless), silently masking
+// the breakage. On any 401 from the API: drop the cached token, refetch it,
+// and replay the failed request exactly once.
+axios.interceptors.response.use(undefined, async (error) => {
+    const cfg = error?.config;
+    if (
+        error?.response?.status === 401 &&
+        cfg && !cfg._plexusRetried &&
+        typeof cfg.url === 'string' && cfg.url.startsWith(API_BASE)
+    ) {
+        sessionTokenPromise = null;
+        delete axios.defaults.headers.common['x-plexus-token'];
+        await ensureSessionToken();
+        cfg._plexusRetried = true;
+        cfg.headers = { ...cfg.headers, 'x-plexus-token': axios.defaults.headers.common['x-plexus-token'] };
+        return axios.request(cfg);
+    }
+    return Promise.reject(error);
+});
+
 // Auto-retry backoff ladder (DESIGN_SPEC §5.13): 2s → 5s → 10s → 30s cap.
 const BACKOFF_STEPS = [2, 5, 10, 30];
 
@@ -81,6 +122,7 @@ export function usePlexus() {
         try {
             // Don't flip the boot screen / unreachable card during background auto-retries.
             if (failCountRef.current === 0) setLoading(true);
+            await ensureSessionToken();
             const [nodes, synapses, amygdala] = await Promise.all([
                 axios.get(`${API_BASE}/api/nodes`),
                 axios.get(`${API_BASE}/api/synapses`),
@@ -110,6 +152,7 @@ export function usePlexus() {
 
     const runSimulation = async (nodeId: string) => {
         try {
+            await ensureSessionToken();
             const res = await axios.post(`${API_BASE}/api/simulate/impact`, {
                 node_ids: [nodeId],
                 change_type: 'modify'

@@ -1,6 +1,19 @@
 import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 import { PlexusNode, PlexusSynapse, AmygdalaEntry, Region } from '../types';
 import { graph } from './graph';
+
+// Deterministic identity for scanner-derived elements (Roadmap 0.2): the same
+// (file, type, name) always maps to the same node id, so re-scans UPSERT
+// instead of duplicating — snapshot diffs stay meaningful across scans, and
+// amygdala trigger_nodes / confidence ledgers keyed by id survive.
+export function deterministicNodeId(filePath: string, type: string, name: string): string {
+    return 'nd-' + crypto.createHash('sha1').update(`${filePath}|${type}|${name}`).digest('hex').slice(0, 20);
+}
+
+export function deterministicSynapseId(sourceId: string, targetId: string, type: string): string {
+    return 'sy-' + crypto.createHash('sha1').update(`${sourceId}|${type}|${targetId}`).digest('hex').slice(0, 20);
+}
 
 export function createNode(partial: Partial<PlexusNode> & { name: string; type: PlexusNode['type']; region: Region; file_path: string }): PlexusNode {
     const now = new Date().toISOString();

@@ -120,8 +120,23 @@ export function initDb(integrationPath: string): Database.Database {
     );
   `);
 
+  // Consultation ledger — the substrate for the git chokepoint (Roadmap 0.5):
+  // every consult / claim-check / simulation records which nodes and files the
+  // AI actually looked at, so unconsulted edits become detectable.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS consultations (
+      id TEXT PRIMARY KEY,
+      session_token TEXT,
+      kind TEXT NOT NULL,
+      node_ids TEXT NOT NULL,
+      file_paths TEXT NOT NULL,
+      timestamp TEXT NOT NULL
+    );
+  `);
+
   // Indexes for performance
   db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_consultations_ts ON consultations(timestamp);
     CREATE INDEX IF NOT EXISTS idx_nodes_region ON nodes(region);
     CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(type);
     CREATE INDEX IF NOT EXISTS idx_synapses_source ON synapses(source_node_id);

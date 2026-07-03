@@ -225,10 +225,126 @@ program
         console.log(`\namygdala: ${u.amygdala.entries} — ${u.amygdala.note}`);
         console.log(`origin mix: ${Object.entries(u.origin_mix).map(([k, v]) => `${k}:${v}`).join(' · ')}`);
         if (u.low_confidence_nodes > 0) console.log(`review queue: ${u.low_confidence_nodes} node(s) below 0.5 classification confidence`);
+        if (u.enrichment_questions?.length) {
+            console.log('\nCATCH-UP QUESTIONS (give these to your AI):');
+            for (const q of u.enrichment_questions) console.log(` ? ${q}`);
+        }
 
         const outPath = path.join(integrationPath, 'imbalance-report.json');
         fs.writeFileSync(outPath, JSON.stringify({ generated_at: new Date().toISOString(), ...u }, null, 2));
         console.log(`\nwritten: ${outPath}`);
+    });
+
+// ─── Genesis: the brain exists before the code ────────────────────────────────
+
+program
+    .command('genesis')
+    .description('Start a NEW app with Plexus: prints the 9-question interview and writes a seed-connectome template')
+    .option('-p, --path <path>', 'Path to target app', process.cwd())
+    .action((options: any) => {
+        const targetPath = path.resolve(options.path);
+        const integrationPath = path.join(targetPath, 'plexus-integration');
+        const cliPath = path.join(__dirname, 'cli.js');
+        if (!fs.existsSync(integrationPath)) {
+            execSync(`node "${cliPath}" init -t "${targetPath}"`, { stdio: 'inherit' });
+        }
+
+        const template = {
+            _format: 'Plexus seed connectome — every node becomes status:planned / origin:seed; the scanner activates it when code lands at (file_path, name). Ids should be stable slugs.',
+            nodes: [
+                { id: 'example_feature', name: 'exampleFeature', type: 'function', region: 'frontal_lobe', file_path: 'src/example.ts', description: 'What this element decides/does, per the interview' },
+            ],
+            synapses: [
+                { source_node_id: 'example_feature', target_node_id: 'example_feature', type: 'calls', strength: 0.8, description: 'replace with real planned relationships' },
+            ],
+            invariants: [
+                { statement: 'An example truth the code must never violate', node_ids: ['example_feature'] },
+            ],
+        };
+        const templatePath = path.join(integrationPath, 'genesis-seed.example.json');
+        fs.writeFileSync(templatePath, JSON.stringify(template, null, 2));
+
+        console.log(`
+⬡ PLEXUS GENESIS — the brain exists before the code.
+
+Answer the NINE QUESTIONS (one per region) with your AI, then have it convert
+the answers into a seed connectome (template written to
+${templatePath}):
+
+  1. DECIDE    (frontal)   — what rules, state machines, and choices does the app make?
+  2. REMEMBER  (temporal)  — what data outlives a session? entities, stores, caches?
+  3. SEE       (occipital) — what does the user literally look at? screens, components, tokens?
+  4. SENSE/SPEAK (parietal)— what does it talk to? APIs in/out, webhooks, third-party services?
+  5. UNATTENDED (cerebellum)— what runs with nobody watching? jobs, pipelines, tests?
+  6. RUN ON    (brain_stem)— hosting, env/secrets, build, auth machinery?
+  7. FEEL      (limbic)    — how should waiting / failure / success / first-run feel?
+  8. BRIDGE    (contracts) — what shapes cross boundaries? (shared DTOs, event payloads)
+  9. GO WRONG  (foresight) — anticipated risks → cascade paths & verification checks,
+                             NEVER amygdala entries (memory is earned by real incidents).
+
+Then load it:      node "${cliPath}" seed -f <your-seed.json> -p "${targetPath}"
+Start the engine:  node "${cliPath}" serve -p "${targetPath}"
+Plug your AI in:   claude mcp add plexus -- node "${cliPath}" mcp -p "${targetPath}"
+Install the guard: node "${cliPath}" hook-install -p "${targetPath}"
+
+Build loop: consult planned nodes → write code at the planned path → the
+scanner activates them (same id) → \`plexus report\` is your build checklist.`);
+    });
+
+program
+    .command('seed')
+    .description('Load a seed connectome (planned nodes + synapses + invariants) into the graph')
+    .requiredOption('-f, --file <file>', 'Seed connectome JSON')
+    .option('-p, --path <path>', 'Path to target app', process.cwd())
+    .action((options: any) => {
+        const targetPath = path.resolve(options.path);
+        const integrationPath = path.join(targetPath, 'plexus-integration');
+        if (!fs.existsSync(integrationPath)) {
+            console.error('Integration not found. Run "plexus genesis" or "plexus init" first.');
+            process.exit(1);
+        }
+        setContext(integrationPath, targetPath);
+        initDb(integrationPath);
+        graph.loadFromDb();
+
+        const seed = JSON.parse(fs.readFileSync(path.resolve(options.file), 'utf8'));
+        const { validateAndBuildNode, validateAndBuildSynapse } = require('./core/validate');
+        const { declareInvariant } = require('./core/invariants');
+
+        let nodes = 0, synapses = 0, invariants = 0;
+        const errors: string[] = [];
+
+        for (const n of seed.nodes || []) {
+            const input = {
+                ...n,
+                status: 'planned',
+                metadata: { ...(n.metadata || {}), origin: 'seed' },
+            };
+            const v = validateAndBuildNode(input, 'command');
+            if (!v.ok) { errors.push(`node ${n.name || n.id}: ${v.errors.join('; ')}`); continue; }
+            graph.addNode(v.value);
+            nodes++;
+        }
+        for (const s of seed.synapses || []) {
+            if (s.source_node_id === s.target_node_id) continue; // template placeholder
+            const v = validateAndBuildSynapse(s);
+            if (!v.ok) { errors.push(`synapse ${s.source_node_id}→${s.target_node_id}: ${v.errors.join('; ')}`); continue; }
+            graph.addSynapse(v.value);
+            synapses++;
+        }
+        for (const inv of seed.invariants || []) {
+            const r = declareInvariant(inv.statement, inv.node_ids, 'user');
+            if (r.ok) invariants++;
+            else errors.push(`invariant: ${r.error}`);
+        }
+        graph.flushToDisk();
+
+        console.log(`⬡ Seeded: ${nodes} planned node(s), ${synapses} synapse(s), ${invariants} invariant(s).`);
+        if (errors.length) {
+            console.warn(`⚠ ${errors.length} rejected:`);
+            for (const e of errors.slice(0, 10)) console.warn('  · ' + e);
+        }
+        console.log('The nine regions are now your build checklist — `plexus report` shows planning debt.');
     });
 
 // ─── Evidence Protocol 2.1: evidence-learned synapse strength ─────────────────

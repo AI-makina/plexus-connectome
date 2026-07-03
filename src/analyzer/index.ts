@@ -408,17 +408,21 @@ export class CodeAnalyzer {
         const { added, modified, removed } = getChangedFiles(files, oldFingerprints);
 
         if (added.length === 0 && modified.length === 0 && removed.length === 0) {
-            console.log('[Analyzer] No changes detected.');
-            return;
+            return; // silent — this runs as the 5s drift sweep
         }
 
-        console.log(`[Analyzer] Incremental: +${added.length} added, ~${modified.length} modified, -${removed.length} removed`);
+        console.log(`[Analyzer] ↻ drift absorbed: +${added.length} added, ~${modified.length} modified, -${removed.length} removed`);
 
-        // Remove nodes for deleted files
+        // Remove SCAN nodes for deleted files — origin-aware, like every other
+        // wipe: enrichment (seed/llm/command/incident) survives file deletion
+        // and is the human's to retire.
         for (const removedPath of removed) {
             const nodeIds: string[] = [];
             for (const node of graph.nodes.values()) {
-                if (node.file_path === removedPath) nodeIds.push(node.id);
+                const origin = (node.metadata as any)?.origin;
+                if (node.file_path === removedPath && (origin === undefined || origin === 'scan')) {
+                    nodeIds.push(node.id);
+                }
             }
             for (const id of nodeIds) graph.deleteNode(id);
         }

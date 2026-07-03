@@ -169,39 +169,27 @@ fs.watch(commandsFile, (eventType) => {
 });
 
 // 7.5 Drift absorption (Evidence Protocol §4, librarian diff-watcher v0):
-// out-of-band edits — human hand-edits, other tools — are DETECTED and
-// ABSORBED by re-deriving the file's map facts, never punished. The graph
-// stays fresh without anyone remembering to re-scan, and /api/verify's
-// fingerprints reconcile automatically.
+// out-of-band edits — human hand-edits, other tools, brand-new files — are
+// DETECTED and ABSORBED by re-deriving map facts, never punished. Fingerprint
+// sweep instead of fs events: event watchers proved unreliable for newly
+// created directories on macOS sandboxes, and a dependable tool prefers a
+// slower guarantee over a faster maybe. The sweep uses the same fingerprint
+// store /api/verify reads, so reconciliation is automatic and uniform for
+// adds, changes, AND deletions.
 if (manifest?.analysis?.watch_for_changes !== false) {
-    try {
-        const chokidar = require('chokidar');
-        const pending = new Map<string, ReturnType<typeof setTimeout>>();
-        chokidar.watch(targetAppPath, {
-            ignored: (p: string) =>
-                /node_modules|\.git\b|\/dist\b|\.next\b|plexus-integration|\.merge-backup/.test(p),
-            ignoreInitial: true,
-            persistent: true,
-        }).on('all', (event: string, absPath: string) => {
-            if (!/\.(ts|tsx|js|jsx)$/.test(absPath)) return;
-            if (event !== 'add' && event !== 'change') return;
-            const rel = path.relative(targetAppPath, absPath);
-            // Debounce per file — editors fire bursts of writes
-            if (pending.has(rel)) clearTimeout(pending.get(rel)!);
-            pending.set(rel, setTimeout(() => {
-                pending.delete(rel);
-                try {
-                    analyzer.analyzeFile(rel);
-                    console.log(`[Plexus Engine] ↻ drift absorbed: ${rel}`);
-                } catch (err: any) {
-                    console.warn(`[Plexus Engine] drift re-scan failed for ${rel}: ${err.message}`);
-                }
-            }, 400));
-        });
-        console.log('[Plexus Engine] Drift watcher active (out-of-band edits are absorbed automatically)');
-    } catch (err: any) {
-        console.warn('[Plexus Engine] drift watcher unavailable:', err.message);
-    }
+    let sweeping = false;
+    setInterval(() => {
+        if (sweeping) return;
+        sweeping = true;
+        try {
+            analyzer.analyzeIncremental();
+        } catch (err: any) {
+            console.warn('[Plexus Engine] drift sweep failed:', err.message);
+        } finally {
+            sweeping = false;
+        }
+    }, 5000);
+    console.log('[Plexus Engine] Drift sweep active (5s fingerprint diff — out-of-band edits are absorbed automatically)');
 }
 
 // Start Backend Server — 127.0.0.1 ONLY. The previous 0.0.0.0 bind exposed an

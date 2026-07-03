@@ -43,6 +43,9 @@ export interface UtilizationReport {
     amygdala: { entries: number; note: string };
     origin_mix: Record<string, number>;
     low_confidence_nodes: number;
+    /** CATCH-UP QUESTIONS (Graft): what Plexus asks the AI so the brain fills
+     *  in what no scanner can see — history, intent, and the concept layer. */
+    enrichment_questions: string[];
 }
 
 export function computeUtilization(): UtilizationReport {
@@ -111,6 +114,39 @@ export function computeUtilization(): UtilizationReport {
     if (freshness === 'never scanned') reasons.push('never scanned');
     const maturity = reasons.length === 0 ? 'enriched' : 'provisional';
 
+    // Catch-up questions — the scanner rebuilt the MAP instantly, but only an
+    // intelligence can supply the CONCEPT layer and confirm mined MEMORY.
+    // These are the concrete asks, generated from what is actually missing.
+    const questions: string[] = [];
+    const REGION_ASK: Record<string, string> = {
+        temporal_lobe: 'What does this app REMEMBER? Create entity/data_store concept nodes for its persistent data (DB models, storage, caches) and wire queries/mutates edges.',
+        limbic_system: 'How is the user supposed to FEEL at transitions? Create journey nodes (onboarding, error recovery, success moments) and confirm loading/empty/error coverage.',
+        cerebellum: 'What runs UNATTENDED? Create pipeline nodes for jobs/crons/CI the scanner could not see (external schedulers, n8n, platform crons).',
+        parietal_lobe: 'What does the app TALK TO? Create service nodes for external APIs/webhooks not visible from SDK imports.',
+        brain_stem: 'What does it RUN ON? Create deploy_target/environment nodes (hosting, domains, secrets locations).',
+        frontal_lobe: 'What are the core business rules? Create feature/flow concept nodes for the main capabilities and declare invariants for rules that must never break.',
+        occipital_lobe: 'What are the main screens/design tokens? Create a screen inventory if the UI lives outside scanned code.',
+        corpus_callosum: 'What shapes cross boundaries? If shared contracts exist outside code (OpenAPI, event catalogs), add contract nodes.',
+    };
+    for (const r of out) {
+        if ((r.status === 'dark' || r.status === 'sparse') && REGION_ASK[r.region]) {
+            questions.push(`[${r.region} is ${r.status}] ${REGION_ASK[r.region]}`);
+        }
+    }
+    if (lowConfidence > 0) {
+        questions.push(`[review queue] ${lowConfidence} node(s) classified below 0.5 confidence — review and correct their regions (mirror fixes into manifest custom_overrides so re-scans agree).`);
+    }
+    try {
+        const proposals = JSON.parse(fs.readFileSync(path.join(getIntegrationPath(), 'plexus-proposals.json'), 'utf8'));
+        const pending = (proposals.proposals || []).length;
+        if (pending > 0) {
+            questions.push(`[mined history] ${pending} proposal(s) from git history await confirmation — confirm real incidents into the amygdala (deposit_amygdala), apply co-change evidence with \`plexus learn --apply\`, discard the rest. Mining never auto-creates memory.`);
+        }
+    } catch { /* not mined yet */ }
+    if (amygdalaCount === 0) {
+        questions.push('[memory] The amygdala is empty. What has failed before in this project (rollbacks, dead-end approaches, recurring bugs)? Deposit what you know — with trigger nodes — so it is never repeated.');
+    }
+
     return {
         utilization_score: Math.round((1 - tv / 2) * 100) / 100,
         maturity,
@@ -125,5 +161,6 @@ export function computeUtilization(): UtilizationReport {
         },
         origin_mix: originMix,
         low_confidence_nodes: lowConfidence,
+        enrichment_questions: questions,
     };
 }

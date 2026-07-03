@@ -176,10 +176,33 @@ async function callTool(name: string, args: any): Promise<string> {
                 const fp = fs.statSync(path.join(integrationPath, 'fingerprints.json'));
                 freshness = `last scan ${Math.round((Date.now() - fp.mtimeMs) / 3600000)}h ago`;
             } catch { freshness = 'never scanned'; }
-            return [
+
+            const lines = [
                 `⬡ PLEXUS ACTIVE — ${path.basename(targetPath)}`,
                 `graph: ${s.total_nodes} nodes · ${s.total_synapses} synapses · ${s.total_amygdala === 0 ? 'amygdala empty (no incidents yet — healthy)' : s.total_amygdala + ' amygdala entries'} · ${freshness}`,
                 `families: ${Object.entries(s.synapse_families || {}).map(([k, v]) => `${k}:${v}`).join(' ')}`,
+            ];
+
+            // Maturity + catch-up: a provisional brain says so, and ASKS the AI
+            // the questions that fill in what no scanner can see.
+            try {
+                const u = await apiRequest('GET', '/api/regions/utilization');
+                if (u.status === 200 && u.data) {
+                    lines.push(`map: ${String(u.data.maturity).toUpperCase()} (utilization ${u.data.utilization_score})${u.data.maturity === 'provisional' ? ' — advisory only until enriched' : ''}`);
+                    const planned = Object.entries(u.data.origin_mix || {}).find(([k]) => k === 'seed');
+                    if (planned) lines.push(`seed/planned elements present — check plan conformance as you build`);
+                    const qs = (u.data.enrichment_questions || []).slice(0, 4);
+                    if (qs.length > 0) {
+                        lines.push('', 'CATCH-UP — Plexus needs you to fill in what scanning cannot see:');
+                        for (const q of qs) lines.push(`· ${q}`);
+                        if ((u.data.enrichment_questions || []).length > 4) {
+                            lines.push(`· (+${u.data.enrichment_questions.length - 4} more — GET /api/regions/utilization)`);
+                        }
+                    }
+                }
+            } catch { /* utilization optional */ }
+
+            lines.push(
                 '',
                 'WORKING PROTOCOL (non-negotiable):',
                 '1. claim_check every identifier you intend to rely on BEFORE writing code that uses it.',
@@ -187,7 +210,8 @@ async function callTool(name: string, args: any): Promise<string> {
                 '3. simulate_impact before non-trivial changes; respect the risk verdict.',
                 '4. After changing code: update_graph with what you created; after any FAILED attempt: deposit_amygdala.',
                 '5. Retire abandoned approaches with mark_dormant — never silently delete.',
-            ].join('\n');
+            );
+            return lines.join('\n');
         }
         case 'consult': {
             const r = await apiRequest('POST', '/api/consult', {

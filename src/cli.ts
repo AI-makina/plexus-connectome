@@ -235,6 +235,17 @@ program
         console.log(`\nwritten: ${outPath}`);
     });
 
+// ─── The Launcher: the plug-and-play front door ───────────────────────────────
+
+program
+    .command('start')
+    .alias('app')
+    .description('Open the Plexus Launcher — create new projects or connect existing ones from one window')
+    .action(() => {
+        const { startLauncher } = require('./launcher');
+        startLauncher(true);
+    });
+
 // ─── Genesis: the brain exists before the code ────────────────────────────────
 
 program

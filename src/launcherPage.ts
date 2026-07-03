@@ -81,6 +81,11 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
 
   <!-- HOME -->
   <div class="view active" id="v-home">
+    <div class="result" style="margin:0 0 18px;border-color:#2A3550">
+      <h4 style="color:var(--azure)">⬡ The plug-and-play way: register once, then just talk to your AI</h4>
+      <p class="hint" style="margin:2px 0 6px">Paste this in a terminal one time. After that, open Claude Code anywhere and say what you want to build — the AI creates the brain, seeds the plan from your own words, and starts every reply with <span class="mono" style="color:var(--ice)">⬡ plexus active</span> so you know it's engaged. The cards below are optional manual paths; this page is your dashboard.</p>
+      <div class="cmd" id="global-mcp" onclick="copyText(this.textContent,null)">loading…</div>
+    </div>
     <div class="cards">
       <div class="card new" onclick="show('v-new')">
         <span class="k">Genesis</span>
@@ -140,8 +145,9 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','
 async function loadProjects(){
   const r = await fetch('/api/launcher/projects').then(x=>x.json());
   document.getElementById('np-base').value ||= r.default_base;
+  if(r.global_mcp) document.getElementById('global-mcp').textContent = r.global_mcp;
   const el = document.getElementById('projects');
-  if(!r.projects.length){el.innerHTML='<p class="hint">No brains yet — create or connect one above.</p>';return;}
+  if(!r.projects.length){el.innerHTML='<p class="hint">No brains yet — talk to your AI (after the one-time command above), or use the cards.</p>';return;}
   el.innerHTML = r.projects.map(p=>\`
     <div class="proj">
       <div class="dot \${p.running?'on':''}"></div>
@@ -149,11 +155,25 @@ async function loadProjects(){
         <div class="name">\${esc(p.name)} <span class="badge \${p.kind==='genesis'?'gen':''}">\${p.kind}</span></div>
         <div class="path">\${esc(p.path)}</div>
         <div class="ports">api :\${p.api_port} · brain :\${p.ws_port}</div>
+        <div class="ports" id="pulse-\${p.api_port}"></div>
       </div>
       <button onclick="serveProject('\${esc(p.path)}', \${p.ws_port})">\${p.running?'Open brain':'Start + open'}</button>
       <button class="ghost" title="copy the MCP command for Claude Code" onclick="copyText(\\\`\${esc(p.mcp_command)}\\\`, this)">MCP ⧉</button>
       <button class="ghost" onclick="forget('\${esc(p.path)}')">✕</button>
     </div>\`).join('');
+  // Reassurance pulse: proof the AI is actually leaning on each brain
+  for(const p of r.projects){
+    if(!p.running) continue;
+    fetch('http://localhost:'+p.api_port+'/api/activity').then(x=>x.json()).then(a=>{
+      const el2 = document.getElementById('pulse-'+p.api_port);
+      if(!el2) return;
+      const ago = a.last_consultation ? Math.round((Date.now()-new Date(a.last_consultation))/60000) : null;
+      el2.innerHTML = '<span style="color:var(--jade)">◉</span> ' +
+        a.consultations_24h + ' consultation'+(a.consultations_24h===1?'':'s')+' today' +
+        (ago!==null ? ' · last '+(ago<1?'just now':ago+'m ago') : '') +
+        ' · '+a.active_nodes+' nodes · '+a.amygdala_entries+' memor'+(a.amygdala_entries===1?'y':'ies');
+    }).catch(()=>{});
+  }
 }
 async function serveProject(p, uiPort){
   await fetch('/api/launcher/serve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p})});

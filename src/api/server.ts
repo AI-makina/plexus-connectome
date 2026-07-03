@@ -376,6 +376,31 @@ app.post('/api/consult', (req, res) => {
     }
 });
 
+// ─── Activity pulse (the reassurance surface) ────────────────────
+// The user never has to interact with Plexus — but they deserve PROOF the AI
+// is leaning on it. Recent ledger activity + memory + growth, dashboard-ready.
+app.get('/api/activity', (_req, res) => {
+    try {
+        const { getConsultationsSince } = require('../core/session');
+        const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+        const recent = getConsultationsSince(since);
+        const stats = graph.getState().stats;
+        res.json({
+            consultations_24h: recent.length,
+            last_consultation: recent[0]?.timestamp || null,
+            recent: recent.slice(0, 12).map((c: any) => ({
+                kind: c.kind, timestamp: c.timestamp,
+                files: c.file_paths.slice(0, 3), nodes: c.node_ids.length,
+            })),
+            amygdala_entries: stats.amygdala_entries,
+            active_nodes: stats.active_nodes,
+            dormant_nodes: stats.dormant_nodes,
+        });
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ─── Invariants (Roadmap 1.6 — fact-keyed) ───────────────────────
 app.get('/api/invariants', (_req, res) => {
     const { loadInvariants } = require('../core/invariants');

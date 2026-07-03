@@ -13,11 +13,49 @@
 import fs from 'fs';
 import path from 'path';
 import http from 'http';
+import { spawn } from 'child_process';
+import { findProjectRoot, registerProject, patchManifestPorts } from './core/registry';
 
+// Project resolution — AI-FIRST workflow (no -p needed): register this MCP
+// server ONCE globally (`claude mcp add --scope user plexus -- plexus mcp`)
+// and it resolves the brain from wherever the session was opened. If no brain
+// exists yet, the init_project tool creates one from the user's own words.
 const argv = process.argv.slice(2);
 const pIdx = Math.max(argv.indexOf('-p'), argv.indexOf('--path'));
-const targetPath = path.resolve(pIdx >= 0 ? argv[pIdx + 1] : process.cwd());
-const integrationPath = path.join(targetPath, 'plexus-integration');
+let targetPath = pIdx >= 0
+    ? path.resolve(argv[pIdx + 1])
+    : (findProjectRoot(process.cwd()) || path.resolve(process.cwd()));
+let integrationPath = path.join(targetPath, 'plexus-integration');
+
+const hasBrain = () => fs.existsSync(integrationPath);
+
+// Auto-start (zero-touch): if the brain exists but its engine isn't running,
+// boot it — the user should never have to remember `plexus serve`.
+let engineStarting = false;
+async function ensureEngine(): Promise<boolean> {
+    if (!hasBrain()) return false;
+    const alive = () => new Promise<boolean>(resolve => {
+        const req = http.get({ host: '127.0.0.1', port: apiPort(), path: '/api/session', timeout: 400 },
+            res => { res.resume(); resolve(true); });
+        req.on('error', () => resolve(false));
+        req.on('timeout', () => { req.destroy(); resolve(false); });
+    });
+    if (await alive()) return true;
+    if (!engineStarting) {
+        engineStarting = true;
+        const child = spawn(process.execPath, [path.join(__dirname, 'index.js'), targetPath], {
+            detached: true, stdio: 'ignore',
+            env: { ...process.env, PLEXUS_NO_OPEN: '1' },
+        });
+        child.unref();
+    }
+    for (let i = 0; i < 24; i++) {
+        await new Promise(r => setTimeout(r, 250));
+        if (await alive()) { engineStarting = false; return true; }
+    }
+    engineStarting = false;
+    return false;
+}
 
 function apiPort(): number {
     try {
@@ -68,8 +106,20 @@ const ENGINE_DOWN_HINT =
 const TOOLS = [
     {
         name: 'session_open',
-        description: 'Open a Plexus session: graph stats, freshness, and the working protocol. Call this FIRST, before reading or writing any code.',
+        description: 'Open a Plexus session: graph stats, freshness, and the working protocol. Call this FIRST, before reading or writing any code. Auto-starts the engine if needed.',
         inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    },
+    {
+        name: 'init_project',
+        description: 'Give this project a brain. Call when the user asks to BUILD something and no Plexus brain exists here yet: pass the app description in the user\'s own words (their prompt IS the genesis brief). Creates + boots the brain; then run the genesis interview conversationally and seed the plan.',
+        inputSchema: {
+            type: 'object', required: ['description'],
+            properties: {
+                description: { type: 'string', description: 'the app, in the user\'s words — copy their intent faithfully' },
+                risks: { type: 'string', description: 'anything the user said must never go wrong' },
+                name: { type: 'string', description: 'project name (defaults to the folder name)' },
+            },
+        },
     },
     {
         name: 'consult',
@@ -167,8 +217,69 @@ const TOOLS = [
 // ─── Tool implementations ─────────────────────────────────────────────────────
 
 async function callTool(name: string, args: any): Promise<string> {
+    // Zero-touch engine: every tool call transparently boots the engine when
+    // the brain exists but isn't being served.
+    if (name !== 'init_project' && hasBrain()) await ensureEngine();
+
     switch (name) {
+        case 'init_project': {
+            if (hasBrain()) {
+                return `A brain already exists at ${targetPath} — call session_open instead.`;
+            }
+            const { execFileSync } = require('child_process');
+            const projName = String(args?.name || path.basename(targetPath));
+            try {
+                execFileSync(process.execPath, [path.join(__dirname, 'cli.js'), 'init', '-t', targetPath, '-n', projName],
+                    { encoding: 'utf8', timeout: 60000 });
+            } catch (err: any) {
+                return `init failed: ${err.message}`;
+            }
+            integrationPath = path.join(targetPath, 'plexus-integration');
+
+            // Registry + collision-free ports (shows up in the launcher dashboard)
+            const entry = registerProject(targetPath, projName, 'genesis');
+            try { patchManifestPorts(targetPath, entry.api_port, entry.ws_port); } catch { /* defaults stand */ }
+
+            // The user's prompt IS the genesis brief
+            const brief = [
+                `# Genesis brief — ${projName}`,
+                `created: ${new Date().toISOString()} (captured from the user's own words by the AI)`,
+                '',
+                '## The app, in the founder\'s words',
+                String(args?.description || '').trim() || '(ask the user what they are imagining)',
+                '',
+                '## What must never go wrong (founder\'s risks)',
+                String(args?.risks || '').trim() || '(none stated yet — worth asking)',
+            ].join('\n');
+            fs.writeFileSync(path.join(integrationPath, 'genesis-brief.md'), brief);
+
+            const booted = await ensureEngine();
+            return [
+                `⬡ ${projName} now has a brain (engine ${booted ? 'running' : 'created — will boot on first use'} · api :${entry.api_port} · 3D brain http://localhost:${entry.ws_port}).`,
+                '',
+                'NEXT, IN THIS CONVERSATION — no forms, no ceremony:',
+                '1. Interview the user conversationally about whatever their description leaves',
+                '   unclear (your checklist: decide / remember / see / sense / unattended /',
+                '   run-on / feel / bridge / go-wrong). Ask only what is genuinely unclear.',
+                '2. Seed the plan via update_graph: planned nodes (status "planned",',
+                '   metadata.origin "seed", intended file_path). Region is OPTIONAL — the',
+                '   librarian places every element. Connect the pieces with typed synapses:',
+                '   the relationships ARE the meaning.',
+                '3. declare_invariant for each stated risk.',
+                '4. Then build. Begin your replies with "⬡ plexus active" so the human can',
+                '   see the brain is engaged.',
+            ].join('\n');
+        }
         case 'session_open': {
+            if (!hasBrain()) {
+                return [
+                    `No Plexus brain at ${targetPath} yet.`,
+                    'If the user asks you to BUILD something here, call init_project with their',
+                    'description (their prompt is the genesis brief) — the brain and engine come',
+                    'up automatically and you seed the plan yourself. If they are just chatting,',
+                    'no action needed.',
+                ].join('\n');
+            }
             const stats = await apiRequest('GET', '/api/viz/stats');
             const s = stats.data;
             let freshness = 'unknown';
@@ -355,7 +466,7 @@ async function handleMessage(line: string) {
                 capabilities: { tools: {} },
                 serverInfo: { name: 'plexus', version: '1.0.0' },
                 instructions:
-                    'Plexus is this project\'s connectome brain — the evidence layer that prevents hallucinated APIs and repeated failures. Call session_open first. Before ANY code change: claim_check the identifiers you rely on, consult the targets, simulate_impact. After changes: update_graph; after failures: deposit_amygdala.',
+                    'Plexus is the project\'s connectome brain — the evidence layer that prevents hallucinated APIs and repeated failures. Call session_open FIRST in every session. If the user asks to build something and no brain exists, call init_project with their own description — the brain and engine come up automatically. Before ANY code change: claim_check the identifiers you rely on, consult the targets, simulate_impact. After changes: update_graph; after failures: deposit_amygdala. REASSURANCE CONVENTION: begin replies with "⬡ plexus active" while the brain is engaged, so the human can see it without ever touching Plexus.',
             },
         });
     } else if (method === 'notifications/initialized' || (method || '').startsWith('notifications/')) {

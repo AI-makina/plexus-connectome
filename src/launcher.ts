@@ -19,31 +19,9 @@ import { LAUNCHER_HTML } from './launcherPage';
 // posture as the engine. This launcher is the seed of the native-app shell.
 
 const LAUNCHER_PORT = parseInt(process.env.PLEXUS_LAUNCHER_PORT || '', 10) || 3199;
-const REGISTRY_DIR = path.join(os.homedir(), '.plexus');
-const REGISTRY_FILE = path.join(REGISTRY_DIR, 'projects.json');
 const CLI = path.join(__dirname, 'cli.js');
 
-interface ProjectEntry {
-    name: string;
-    path: string;
-    api_port: number;
-    ws_port: number;
-    created_at: string;
-    kind: 'genesis' | 'connected';
-}
-interface Registry { projects: ProjectEntry[]; next_port: number }
-
-function loadRegistry(): Registry {
-    try {
-        const r = JSON.parse(fs.readFileSync(REGISTRY_FILE, 'utf8'));
-        if (r && Array.isArray(r.projects)) return r;
-    } catch { /* first run */ }
-    return { projects: [], next_port: 3300 };
-}
-function saveRegistry(r: Registry) {
-    fs.mkdirSync(REGISTRY_DIR, { recursive: true });
-    fs.writeFileSync(REGISTRY_FILE, JSON.stringify(r, null, 2));
-}
+import { loadRegistry, saveRegistry, patchManifestPorts } from './core/registry';
 
 function runCli(args: string[], cwd?: string): string {
     return execFileSync(process.execPath, [CLI, ...args], {
@@ -60,13 +38,6 @@ function probe(port: number): Promise<boolean> {
         req.on('error', () => resolve(false));
         req.on('timeout', () => { req.destroy(); resolve(false); });
     });
-}
-
-function patchManifestPorts(projectPath: string, apiPort: number, wsPort: number) {
-    const manifestPath = path.join(projectPath, 'plexus-integration', 'plexus-manifest.json');
-    const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    m.server = { ...(m.server || {}), api_port: apiPort, ws_port: wsPort };
-    fs.writeFileSync(manifestPath, JSON.stringify(m, null, 2));
 }
 
 // ─── Server ───────────────────────────────────────────────────────────────────
@@ -105,7 +76,14 @@ export function startLauncher(open = true) {
                 mcp_command: `claude mcp add plexus -- node "${CLI}" mcp -p "${p.path}"`,
             });
         }
-        res.json({ projects: out, default_base: path.join(os.homedir(), 'Desktop', 'Codes', 'Apps') });
+        res.json({
+            projects: out,
+            default_base: path.join(os.homedir(), 'Desktop', 'Codes', 'Apps'),
+            // The AI-first path: register ONCE (user scope, no project path) —
+            // the plug resolves the brain from wherever a session is opened,
+            // and init_project lets the AI create brains itself.
+            global_mcp: `claude mcp add --scope user plexus -- node "${CLI}" mcp`,
+        });
     });
 
     // Minimal directory browser for "connect existing"

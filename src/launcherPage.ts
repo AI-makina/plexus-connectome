@@ -100,13 +100,16 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   <!-- NEW PROJECT -->
   <div class="view" id="v-new">
     <span class="back" onclick="show('v-home')">← back</span>
-    <h2 style="margin-bottom:4px">New project — the genesis interview</h2>
-    <p class="hint">One line per answer. Skip anything you don't know yet — the brain grows.</p>
+    <h2 style="margin-bottom:4px">New project</h2>
+    <p class="hint">Describe it in your own words — your AI and the librarian turn this into the brain. You never file anything into lobes.</p>
     <div class="row" style="margin-top:18px">
       <div class="grow"><label>Project name</label><input type="text" id="np-name" placeholder="my-app"></div>
       <div class="grow"><label>Create inside</label><input type="text" id="np-base"></div>
     </div>
-    <div id="np-questions"></div>
+    <label>What are you imagining?</label>
+    <textarea id="np-desc" style="min-height:130px;font-family:var(--sans);font-size:14px" placeholder="Write it like you'd tell a friend. What it does, who it's for, what the user sees, what it talks to, anything that should happen on its own…"></textarea>
+    <label>What must never go wrong? <span style="color:var(--lo);text-transform:none;letter-spacing:0">(optional — these become standing guards your AI is warned about forever)</span></label>
+    <textarea id="np-risks" placeholder="e.g. never double-charge a customer · never lose a draft"></textarea>
     <div class="status" id="np-status"></div>
     <button class="primary" id="np-create" onclick="createProject()">Create project + brain</button>
     <div id="np-result"></div>
@@ -130,17 +133,6 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
 const REGION_HEX = { frontal_lobe:'#7AA2F7', temporal_lobe:'#E3B341', occipital_lobe:'#E573B7',
   parietal_lobe:'#73C991', cerebellum:'#9D7CD8', brain_stem:'#8B98A9', limbic_system:'#E8795B',
   corpus_callosum:'#C8CFDA' };
-const QUESTIONS = [
-  ['decide','frontal_lobe','What does it DECIDE?','business rules, choices, state machines — e.g. who can complete a task'],
-  ['remember','temporal_lobe','What does it REMEMBER?','data that outlives a session — e.g. tasks, user accounts'],
-  ['see','occipital_lobe','What does the user SEE?','screens & main views — e.g. task list, settings screen'],
-  ['sense','parietal_lobe','What does it TALK TO?','APIs, webhooks, third parties — e.g. Stripe, email service'],
-  ['unattended','cerebellum','What runs UNATTENDED?','jobs, schedules, pipelines — e.g. nightly digest'],
-  ['run_on','brain_stem','What does it RUN ON?','hosting, environments — e.g. Vercel, Hetzner VPS'],
-  ['feel','limbic_system','How should it FEEL?','moments that matter — e.g. checkout feels instant'],
-  ['bridge','corpus_callosum','What SHAPES cross boundaries?','shared payloads/contracts — e.g. order event payload'],
-  ['go_wrong','crimson','What could GO WRONG?','risks to guard against — these become invariants, e.g. double charging'],
-];
 function show(id){document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));document.getElementById(id).classList.add('active');if(id==='v-home')loadProjects();}
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
@@ -175,35 +167,29 @@ async function forget(p){
 function copyText(t, btn){navigator.clipboard.writeText(t);if(btn){const o=btn.textContent;btn.textContent='copied ✓';setTimeout(()=>btn.textContent=o,1500);}}
 
 // new project
-document.getElementById('np-questions').innerHTML = QUESTIONS.map(([k,region,title,hint])=>\`
-  <div class="q" style="border-color:\${REGION_HEX[region]||'#E5484D'};margin-top:20px">
-    <span class="region" style="color:\${REGION_HEX[region]||'#E5484D'}">\${region==='crimson'?'foresight':region.replace('_',' ')}</span>
-    <label style="margin-top:2px">\${title}</label>
-    <textarea id="q-\${k}" placeholder="\${hint}"></textarea>
-  </div>\`).join('');
-
 async function createProject(){
   const name = document.getElementById('np-name').value.trim();
   const status = document.getElementById('np-status');
   if(!name){status.textContent='name the project first';return;}
-  const answers = {};
-  for(const [k] of QUESTIONS){
-    answers[k] = document.getElementById('q-'+k).value.split('\\n').map(s=>s.trim()).filter(Boolean);
-  }
   document.getElementById('np-create').disabled = true;
-  status.textContent = 'creating project · initializing brain · seeding planned connectome…';
+  status.textContent = 'creating project · initializing brain · writing the genesis brief…';
   const r = await fetch('/api/launcher/create',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name, base_dir:document.getElementById('np-base').value, answers})}).then(x=>x.json());
+    body:JSON.stringify({
+      name,
+      base_dir: document.getElementById('np-base').value,
+      description: document.getElementById('np-desc').value,
+      risks: document.getElementById('np-risks').value,
+    })}).then(x=>x.json());
   document.getElementById('np-create').disabled = false;
   if(r.error){status.textContent='✗ '+r.error;return;}
   status.textContent='';
   document.getElementById('np-result').innerHTML = \`
     <div class="result">
-      <h4>⬡ \${esc(name)} is alive — \${r.seeded.nodes} planned element\${r.seeded.nodes===1?'':'s'}, \${r.seeded.invariants} invariant\${r.seeded.invariants===1?'':'s'}, before any code.</h4>
+      <h4>⬡ \${esc(name)} is ready — your brief is in the brain, waiting for your AI.</h4>
       <div class="steps">
-        <b>1.</b> <button onclick="serveProject('\${esc(r.path)}', \${r.ws_port})">Start + open the brain</button> — your planned connectome in 3D<br>
-        <b>2.</b> Plug your AI in (paste in a terminal, once): <div class="cmd" onclick="copyText(this.textContent,null)">\${esc(r.mcp_command)}</div>
-        <b>3.</b> Open a Claude Code session in <span class="mono">\${esc(r.path)}</span> and start building — the AI consults the plan, and code you write activates the planned nodes automatically.
+        <b>1.</b> Plug your AI in (paste in a terminal, once): <div class="cmd" onclick="copyText(this.textContent,null)">\${esc(r.mcp_command)}</div>
+        <b>2.</b> Open a Claude Code session in <span class="mono">\${esc(r.path)}</span>. Its first contact receives your brief — it interviews you conversationally about anything unclear, then seeds the connectome itself. The librarian places every element; the relationships are what matter.<br>
+        <b>3.</b> <button onclick="serveProject('\${esc(r.path)}', \${r.ws_port})">Start + open the brain</button> — watch it grow as you two build.
       </div>
     </div>\`;
   loadProjects();

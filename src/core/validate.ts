@@ -75,6 +75,22 @@ export function validateNodeInput(
 
 /** Validate + normalize a full node create. Returns a complete PlexusNode. */
 export function validateAndBuildNode(input: any, origin: 'command' | 'llm' = 'command'): Validation<PlexusNode> {
+    // LIBRARIAN PLACEMENT: region is optional on external writes. The writer
+    // supplies the TRUTH (name, type, description, file); anatomical placement
+    // is the librarian's job — derived by the same classifier the scanner
+    // uses, so human and AI never have to think in lobes unless they want to.
+    if (isPlainObject(input) && !input.region && isNonEmptyString(input.type)) {
+        try {
+            const { classifyRegionScored } = require('../analyzer/classifier');
+            const scored = classifyRegionScored(
+                String(input.file_path || ''),
+                input.type,
+                `${input.name || ''} ${input.description || ''}`,
+            );
+            input.region = scored.region;
+            input.metadata = { ...(isPlainObject(input.metadata) ? input.metadata : {}), classification_confidence: Math.round(scored.confidence * 100) / 100, placed_by: 'librarian' };
+        } catch { /* classifier unavailable — validation will require region */ }
+    }
     const v = validateNodeInput(input);
     if (!v.ok) return v;
     // Provenance discipline: external writers may DECLARE seed/llm/incident/

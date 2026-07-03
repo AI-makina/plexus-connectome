@@ -45,10 +45,6 @@ function saveRegistry(r: Registry) {
     fs.writeFileSync(REGISTRY_FILE, JSON.stringify(r, null, 2));
 }
 
-function slugify(s: string): string {
-    return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 48) || 'item';
-}
-
 function runCli(args: string[], cwd?: string): string {
     return execFileSync(process.execPath, [CLI, ...args], {
         cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 180000,
@@ -71,54 +67,6 @@ function patchManifestPorts(projectPath: string, apiPort: number, wsPort: number
     const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     m.server = { ...(m.server || {}), api_port: apiPort, ws_port: wsPort };
     fs.writeFileSync(manifestPath, JSON.stringify(m, null, 2));
-}
-
-// The 9 interview answers → a planned connectome, deterministically. Each
-// answer line becomes a concept node in its region (status planned, origin
-// seed); GO-WRONG lines become invariants bound to the feature nodes. The AI
-// refines all of this later — but the brain is ALIVE from the first click.
-const QUESTION_MAP: { key: string; type: string; region: string; label: string }[] = [
-    { key: 'decide', type: 'feature', region: 'frontal_lobe', label: 'decision/feature' },
-    { key: 'remember', type: 'entity', region: 'temporal_lobe', label: 'persistent data' },
-    { key: 'see', type: 'page', region: 'occipital_lobe', label: 'screen/visual' },
-    { key: 'sense', type: 'service', region: 'parietal_lobe', label: 'integration' },
-    { key: 'unattended', type: 'pipeline', region: 'cerebellum', label: 'background work' },
-    { key: 'run_on', type: 'deploy_target', region: 'brain_stem', label: 'infrastructure' },
-    { key: 'feel', type: 'journey', region: 'limbic_system', label: 'experience journey' },
-    { key: 'bridge', type: 'contract', region: 'corpus_callosum', label: 'shared contract' },
-];
-
-function buildSeedFromAnswers(answers: Record<string, string[]>): any {
-    const nodes: any[] = [];
-    const invariants: any[] = [];
-    const featureIds: string[] = [];
-
-    for (const q of QUESTION_MAP) {
-        for (const item of answers[q.key] || []) {
-            const text = String(item).trim();
-            if (!text) continue;
-            const id = `seed_${q.key}_${slugify(text)}`;
-            if (nodes.some(n => n.id === id)) continue;
-            nodes.push({
-                id,
-                name: text.length > 60 ? text.slice(0, 57) + '…' : text,
-                type: q.type,
-                region: q.region,
-                file_path: `concepts/${q.key}.md`,
-                description: `${q.label} (genesis interview): ${text}`,
-            });
-            if (q.key === 'decide') featureIds.push(id);
-        }
-    }
-    for (const risk of answers['go_wrong'] || []) {
-        const text = String(risk).trim();
-        if (!text || featureIds.length === 0) continue;
-        invariants.push({
-            statement: `Guard against: ${text}`,
-            node_ids: featureIds,
-        });
-    }
-    return { nodes, synapses: [], invariants };
 }
 
 // ─── Server ───────────────────────────────────────────────────────────────────
@@ -180,10 +128,14 @@ export function startLauncher(open = true) {
         }
     });
 
-    // NEW PROJECT: folder + git + init + ports + seed-from-answers
+    // NEW PROJECT: folder + git + init + ports + the GENESIS BRIEF.
+    // The user describes the app in their own words; the brief lands in the
+    // brain and the AI's first session receives it with the interview as ITS
+    // checklist. Categorization/placement is AI + librarian work — the human
+    // never files anything into lobes.
     app.post('/api/launcher/create', (req, res) => {
         try {
-            const { base_dir, name, answers } = req.body || {};
+            const { base_dir, name, description, risks } = req.body || {};
             if (!name || !/^[a-zA-Z0-9][a-zA-Z0-9-_ ]*$/.test(name)) {
                 return res.status(400).json({ error: 'project name must start alphanumeric' });
             }
@@ -203,16 +155,25 @@ export function startLauncher(open = true) {
             reg.next_port += 10;
             patchManifestPorts(projectPath, apiPort, wsPort);
 
-            let seeded = { nodes: 0, invariants: 0 };
-            if (answers && typeof answers === 'object') {
-                const seed = buildSeedFromAnswers(answers);
-                if (seed.nodes.length > 0) {
-                    const seedPath = path.join(projectPath, 'plexus-integration', 'genesis-seed.json');
-                    fs.writeFileSync(seedPath, JSON.stringify(seed, null, 2));
-                    runCli(['seed', '-f', seedPath, '-p', projectPath]);
-                    seeded = { nodes: seed.nodes.length, invariants: seed.invariants.length };
-                }
-            }
+            const brief = [
+                `# Genesis brief — ${name}`,
+                `created: ${new Date().toISOString()}`,
+                '',
+                '## The app, in the founder\'s words',
+                String(description || '(no description given — ask the user what they are imagining)').trim(),
+                '',
+                '## What must never go wrong (founder\'s risks)',
+                String(risks || '(none stated yet — worth asking)').trim(),
+                '',
+                '## Instructions for the AI (first session)',
+                'Run the genesis interview conversationally using your internal checklist',
+                '(decide / remember / see / sense-speak / unattended / run-on / feel / bridge / go-wrong).',
+                'Ask only what the brief leaves unclear. Then seed the connectome yourself via',
+                'update_graph (status planned, origin seed) and declare_invariant for the risks.',
+                'You may omit region — the librarian places every element. What matters most is',
+                'the RELATIONSHIPS: connect the planned pieces with typed synapses.',
+            ].join('\n');
+            fs.writeFileSync(path.join(projectPath, 'plexus-integration', 'genesis-brief.md'), brief);
 
             reg.projects.unshift({
                 name, path: projectPath, api_port: apiPort, ws_port: wsPort,
@@ -222,7 +183,6 @@ export function startLauncher(open = true) {
 
             res.json({
                 success: true, path: projectPath, api_port: apiPort, ws_port: wsPort,
-                seeded,
                 mcp_command: `claude mcp add plexus -- node "${CLI}" mcp -p "${projectPath}"`,
             });
         } catch (err: any) {

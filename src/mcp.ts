@@ -183,6 +183,30 @@ async function callTool(name: string, args: any): Promise<string> {
                 `families: ${Object.entries(s.synapse_families || {}).map(([k, v]) => `${k}:${v}`).join(' ')}`,
             ];
 
+            // GENESIS HANDOFF: a fresh brain carrying a founder's brief means
+            // the interview is THIS session's first job — the AI runs it
+            // conversationally (its own checklist, not the user's form) and
+            // seeds the connectome itself; the librarian places every element.
+            try {
+                const briefPath = path.join(integrationPath, 'genesis-brief.md');
+                if (fs.existsSync(briefPath) && (s.total_nodes || 0) < 3) {
+                    const brief = fs.readFileSync(briefPath, 'utf8');
+                    lines.push(
+                        '',
+                        '━━ GENESIS — this brain is newborn and carries the founder\'s brief ━━',
+                        brief.trim(),
+                        '',
+                        'YOUR FIRST JOB (before any code): digest the brief; ask the user',
+                        'conversationally about whatever your checklist finds unclear (decide /',
+                        'remember / see / sense / unattended / run-on / feel / bridge / go-wrong),');
+                    lines.push(
+                        'then seed the plan: update_graph with planned nodes (status "planned",',
+                        'metadata.origin "seed", intended file_path) — region is OPTIONAL, the',
+                        'librarian places elements — connect them with typed synapses (the',
+                        'relationships ARE the meaning), and declare_invariant for each risk.');
+                }
+            } catch { /* brief optional */ }
+
             // Maturity + catch-up: a provisional brain says so, and ASKS the AI
             // the questions that fill in what no scanner can see.
             try {

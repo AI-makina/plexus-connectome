@@ -131,15 +131,15 @@ const REGION_HEX = { frontal_lobe:'#7AA2F7', temporal_lobe:'#E3B341', occipital_
   parietal_lobe:'#73C991', cerebellum:'#9D7CD8', brain_stem:'#8B98A9', limbic_system:'#E8795B',
   corpus_callosum:'#C8CFDA' };
 const QUESTIONS = [
-  ['decide','frontal_lobe','What does it DECIDE?','business rules, choices, state machines — e.g. 'who can complete a task''],
-  ['remember','temporal_lobe','What does it REMEMBER?','data that outlives a session — e.g. 'tasks', 'user accounts''],
-  ['see','occipital_lobe','What does the user SEE?','screens & main views — e.g. 'task list', 'settings screen''],
-  ['sense','parietal_lobe','What does it TALK TO?','APIs, webhooks, third parties — e.g. 'Stripe', 'email service''],
-  ['unattended','cerebellum','What runs UNATTENDED?','jobs, schedules, pipelines — e.g. 'nightly digest''],
-  ['run_on','brain_stem','What does it RUN ON?','hosting, environments — e.g. 'Vercel', 'Hetzner VPS''],
-  ['feel','limbic_system','How should it FEEL?','moments that matter — e.g. 'checkout feels instant''],
-  ['bridge','corpus_callosum','What SHAPES cross boundaries?','shared payloads/contracts — e.g. 'order event payload''],
-  ['go_wrong','crimson','What could GO WRONG?','risks to guard against — these become invariants, e.g. 'double charging''],
+  ['decide','frontal_lobe','What does it DECIDE?','business rules, choices, state machines — e.g. who can complete a task'],
+  ['remember','temporal_lobe','What does it REMEMBER?','data that outlives a session — e.g. tasks, user accounts'],
+  ['see','occipital_lobe','What does the user SEE?','screens & main views — e.g. task list, settings screen'],
+  ['sense','parietal_lobe','What does it TALK TO?','APIs, webhooks, third parties — e.g. Stripe, email service'],
+  ['unattended','cerebellum','What runs UNATTENDED?','jobs, schedules, pipelines — e.g. nightly digest'],
+  ['run_on','brain_stem','What does it RUN ON?','hosting, environments — e.g. Vercel, Hetzner VPS'],
+  ['feel','limbic_system','How should it FEEL?','moments that matter — e.g. checkout feels instant'],
+  ['bridge','corpus_callosum','What SHAPES cross boundaries?','shared payloads/contracts — e.g. order event payload'],
+  ['go_wrong','crimson','What could GO WRONG?','risks to guard against — these become invariants, e.g. double charging'],
 ];
 function show(id){document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));document.getElementById(id).classList.add('active');if(id==='v-home')loadProjects();}
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}

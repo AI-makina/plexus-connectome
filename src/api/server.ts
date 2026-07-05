@@ -377,7 +377,7 @@ app.post('/api/consult', (req, res) => {
         // caller declared it's about to touch — so consulting a file you're
         // about to CREATE (no node yet) still earns the right to edit it.
         const covered = Array.from(new Set([
-            ...(brief.consulted_file_paths || []),
+            ...(brief.all_resolved_files || brief.consulted_file_paths || []),
             ...((Array.isArray(file_paths) ? file_paths : []) as string[]),
         ]));
         const receipt = issueReceipt(getIntegrationPath(), 'consult', covered);

@@ -3,11 +3,19 @@ import { Command } from 'commander';
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
-import { CodeAnalyzer } from './analyzer';
-import { initDb } from './db/sqlite';
-import { graph } from './core/graph';
-import { setContext, setManifest } from './core/context';
 import { PlexusManifest } from './types';
+
+// Heavy modules (ts-morph analyzer, sqlite graph) are lazy-loaded per command:
+// the enforcement HOOKS (hook-guard/session-status/hook-notify) must not pay
+// ~124ms to import ts-morph, and — more importantly — must not fail if such an
+// import ever throws. Hooks depend only on the pure-fs receipts module.
+const engine = () => ({
+    CodeAnalyzer: require('./analyzer').CodeAnalyzer as typeof import('./analyzer').CodeAnalyzer,
+    initDb: require('./db/sqlite').initDb as typeof import('./db/sqlite').initDb,
+    graph: require('./core/graph').graph as typeof import('./core/graph').graph,
+    setContext: require('./core/context').setContext as typeof import('./core/context').setContext,
+    setManifest: require('./core/context').setManifest as typeof import('./core/context').setManifest,
+});
 
 const program = new Command();
 program.name('plexus').description('Plexus Neural Connectome CLI').version('1.0.0');
@@ -87,6 +95,7 @@ program
             process.exit(1);
         }
 
+        const { setContext, setManifest, initDb, graph, CodeAnalyzer } = engine();
         setContext(integrationPath, targetPath);
 
         // Load manifest
@@ -120,51 +129,53 @@ program
         if (!fs.existsSync(integrationPath)) process.exit(0); // Plexus not set up — never block
 
         const strict = !!options.strict;
+        const { isFileCovered, isMappedCode, recordBypass } = require('./core/receipts');
+
+        // Phase 1 — figure out the staged, mapped files. A failure HERE (no git,
+        // huge diff, etc.) is "couldn't run the check at all" → allow (not the
+        // AI's fault). Only once we KNOW there is mapped code do we fail closed.
+        let mapped: string[] = [];
         try {
-            const { isFileCovered, isMappedCode, recordBypass } = require('./core/receipts');
             const staged = execSync('git diff --cached --name-only --relative', { cwd: targetPath })
                 .toString().split('\n').map((s: string) => s.trim()).filter(Boolean)
                 .filter((f: string) => !f.startsWith('plexus-integration/'));
             if (staged.length === 0) process.exit(0);
-
-            // Strict enforcement keys on RECEIPTS (the verifiable artifact),
-            // not on time-windowed ledger heuristics: mapped code needs a fresh
-            // receipt; docs/config/scratch always pass.
-            const mapped = staged.filter((f: string) => isMappedCode(f, integrationPath));
-            const unconsulted = mapped.filter((f: string) => !isFileCovered(integrationPath, f));
-
-            if (unconsulted.length === 0) process.exit(0);
-
-            if (strict) {
-                if (process.env.PLEXUS_BYPASS === '1') {
-                    recordBypass(integrationPath, unconsulted, 'PLEXUS_BYPASS=1 at commit');
-                    console.warn('⚠ PLEXUS bypass used — commit allowed, scar recorded in bypass-log.json:');
-                    for (const f of unconsulted) console.warn(`   · ${f}`);
-                    process.exit(0);
-                }
-                console.error('');
-                console.error('⛔ PLEXUS — commit blocked: mapped code changed without consultation:');
-                for (const f of unconsulted) console.error(`   · ${f}`);
-                console.error('   Consult these files first (your AI: the consult MCP tool), then re-commit.');
-                console.error('   One-off override:  PLEXUS_BYPASS=1 git commit …  (logged)');
-                console.error('');
-                process.exit(1);
-            }
-
-            console.warn('');
-            console.warn('⬡ PLEXUS — unconsulted changes (warn-only):');
-            for (const f of unconsulted) console.warn(`   · ${f}`);
-            console.warn(`   ${unconsulted.length}/${mapped.length} mapped file(s) had no consultation receipt.`);
-            console.warn('   Consult before changing, or run `plexus hook-install --strict` to enforce.');
-            console.warn('');
-            process.exit(0);
+            mapped = staged.filter((f: string) => { try { return isMappedCode(f, integrationPath); } catch { return true; } });
         } catch {
-            // Warn-only must never break a commit. Strict fails CLOSED on mapped
-            // code (an enforcement layer that fails open is theater) — but only
-            // if we got far enough to know there IS mapped code; a total failure
-            // here (git absent, etc.) is not the AI's fault, so allow.
             process.exit(0);
         }
+        if (mapped.length === 0) process.exit(0);
+
+        // Phase 2 — coverage. A per-file error counts that file as UNCONSULTED
+        // (fail closed), never as a reason to abort the whole check and allow.
+        const unconsulted = mapped.filter((f: string) => {
+            try { return !isFileCovered(integrationPath, f); } catch { return true; }
+        });
+        if (unconsulted.length === 0) process.exit(0);
+
+        if (strict) {
+            if (process.env.PLEXUS_BYPASS === '1') {
+                try { recordBypass(integrationPath, unconsulted, 'PLEXUS_BYPASS=1 at commit'); } catch { /* scar best-effort */ }
+                console.warn('⚠ PLEXUS bypass used — commit allowed, scar recorded in bypass-log.json:');
+                for (const f of unconsulted) console.warn(`   · ${f}`);
+                process.exit(0);
+            }
+            console.error('');
+            console.error('⛔ PLEXUS — commit blocked: mapped code changed without consultation:');
+            for (const f of unconsulted) console.error(`   · ${f}`);
+            console.error('   Consult these files first (your AI: the consult MCP tool), then re-commit.');
+            console.error('   One-off override:  PLEXUS_BYPASS=1 git commit …  (logged)');
+            console.error('');
+            process.exit(1);
+        }
+
+        console.warn('');
+        console.warn('⬡ PLEXUS — unconsulted changes (warn-only):');
+        for (const f of unconsulted) console.warn(`   · ${f}`);
+        console.warn(`   ${unconsulted.length}/${mapped.length} mapped file(s) had no consultation receipt.`);
+        console.warn('   Consult before changing, or run `plexus hook-install --strict` to enforce.');
+        console.warn('');
+        process.exit(0);
     });
 
 program
@@ -214,36 +225,109 @@ program
     .description('PreToolUse guard (internal): block unconsulted edits to mapped code. Reads harness JSON on stdin.')
     .option('--file <file>', 'File to check (for manual testing instead of stdin)')
     .action((options: any) => {
+        // Fail-closed helper: exit 2 is the ONLY Claude Code exit code that
+        // blocks a tool call. Any exception here that let the process exit 1
+        // would be treated as a non-blocking error and the edit would PROCEED —
+        // so once we know a file is mapped, every error path must exit 2.
         const { findProjectRoot } = require('./core/registry');
         const { isFileCovered, isMappedCode, normRel } = require('./core/receipts');
+        const block = (msg: string) => { process.stderr.write('⛔ plexus: ' + msg + '\n'); process.exit(2); };
+        const coveredMapped = (root: string, absFile: string): 'pass' | 'block' => {
+            const integ = path.join(root, 'plexus-integration');
+            const rel = normRel(path.relative(root, absFile));
+            let mapped = true; try { mapped = isMappedCode(rel, integ); } catch { mapped = true; }
+            if (!mapped) return 'pass';
+            let ok = false; try { ok = isFileCovered(integ, rel); } catch { ok = false; }
+            return ok ? 'pass' : 'block';
+        };
 
-        // Extract the edited file from the harness payload (stdin) or --file
+        // Extract the edited file + whether this was a gated edit tool at all.
         let filePath = options.file as string | undefined;
+        let sawPayload = false;
+        let gatedTool = !!filePath;
+        let toolName = '';
+        let bashCommand = '';
         if (!filePath) {
             try {
                 const raw = fs.readFileSync(0, 'utf8');
-                const payload = JSON.parse(raw);
-                const ti = payload.tool_input || {};
-                filePath = ti.file_path || ti.notebook_path || ti.path;
-            } catch { /* no stdin — nothing to guard */ }
+                if (raw && raw.trim()) {
+                    sawPayload = true;
+                    const payload = JSON.parse(raw);
+                    const ti = payload.tool_input || {};
+                    toolName = payload.tool_name || '';
+                    filePath = ti.file_path || ti.notebook_path || ti.path;
+                    bashCommand = ti.command || '';
+                    gatedTool = /^(Edit|Write|MultiEdit|NotebookEdit)$/.test(toolName) || !!filePath;
+                }
+            } catch { /* fall through — handled below */ }
         }
-        if (!filePath) process.exit(0);
 
-        const absFile = path.resolve(filePath);
-        const root = findProjectRoot(path.dirname(absFile));
-        if (!root) process.exit(0); // not inside a Plexus project — pass through
-        const integrationPath = path.join(root, 'plexus-integration');
-        const rel = normRel(path.relative(root, absFile));
+        // BASH WRITE GUARD: a drifting AI can bypass the Edit tools by writing
+        // files through the shell (sed -i, cat > f, >> redirection, tee). Catch
+        // the common in-place/redirect patterns; best-effort (the shell is too
+        // varied to fail-closed on — the strict pre-commit is the backstop for
+        // anything this misses). Only blocks on a CLEARLY-identified mapped
+        // target that lacks a receipt, so legit /tmp/scratch writes pass.
+        if (toolName === 'Bash' && bashCommand) {
+            const candidates = new Set<string>();
+            // Redirection / tee write targets
+            for (const m of bashCommand.matchAll(/(?:>>?|\btee\s+(?:-a\s+)?)\s*['"]?([^\s'"|&;<>]+)/g)) {
+                if (m[1] && !/^\/dev\//.test(m[1]) && !/^&?\d$/.test(m[1])) candidates.add(m[1]);
+            }
+            // In-place editors (sed -i / perl -i): the shell grammar is too
+            // varied to parse the file arg exactly, so within a command that
+            // does in-place editing, treat every source-file-looking token as a
+            // candidate. (Reads like `cat x.ts` have no -i and are NOT flagged.)
+            if (/\b(?:sed|perl)\b[^|&;]*\s-i/.test(bashCommand)) {
+                for (const m of bashCommand.matchAll(/(['"]?)([^\s'"|&;<>]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|rb|php|swift|kt|cc?|cpp|h|hpp|cs|vue|svelte))\1/gi)) {
+                    candidates.add(m[2]);
+                }
+            }
+            for (const c of candidates) {
+                let abs: string; try { abs = path.resolve(c); } catch { continue; }
+                const root = (() => { try { return findProjectRoot(path.dirname(abs)); } catch { return null; } })();
+                if (!root) continue;
+                if (coveredMapped(root, abs) === 'block') {
+                    block(`shell write to mapped source ${normRel(path.relative(root, abs))} without consultation — consult it first, or use the Edit tool. (${c})`);
+                }
+            }
+            process.exit(0); // no mapped target identified — allow
+        }
 
-        if (!isMappedCode(rel, integrationPath)) process.exit(0); // docs/config/scratch — free
-        if (isFileCovered(integrationPath, rel)) process.exit(0);  // fresh receipt — allowed
+        // No target extracted. hook-guard ONLY runs on gated tool calls (the
+        // PreToolUse matcher), so a non-empty payload we couldn't turn into a
+        // target is a schema drift on a gated tool → fail CLOSED. Empty stdin
+        // is a manual/test invocation → pass.
+        if (!filePath) {
+            if (sawPayload) block('could not determine the edit target from the tool payload — consult first (or report this to Plexus: hook schema drift).');
+            process.exit(0);
+        }
+        void gatedTool;
 
-        // Fail CLOSED for mapped code. The fix is in the message; the consult
-        // MCP tool auto-boots the engine, so the AI can always unblock itself.
-        process.stderr.write(
-            `⛔ plexus: ${rel} not consulted this session — call the consult tool for this file first (it auto-starts the engine), then retry the edit.\n`
-        );
-        process.exit(2);
+        let root: string | null = null;
+        let rel = '';
+        let integrationPath = '';
+        try {
+            const absFile = path.resolve(filePath);
+            root = findProjectRoot(path.dirname(absFile));
+            if (!root) process.exit(0); // not inside a Plexus project — pass through
+            integrationPath = path.join(root, 'plexus-integration');
+            rel = normRel(path.relative(root, absFile));
+        } catch {
+            process.exit(0); // couldn't even resolve the path — not our project to guard
+        }
+
+        // From here the file IS inside a Plexus project. Determine mapped-ness;
+        // if that throws, fail CLOSED (treat as mapped) rather than open.
+        let mapped = true;
+        try { mapped = isMappedCode(rel, integrationPath); } catch { mapped = true; }
+        if (!mapped) process.exit(0); // docs/config/scratch — free
+
+        let covered = false;
+        try { covered = isFileCovered(integrationPath, rel); } catch { covered = false; }
+        if (covered) process.exit(0); // fresh consult receipt — allowed
+
+        block(`${rel} not consulted this session — call the consult tool for this file first (it auto-starts the engine), then retry the edit.`);
     });
 
 // SessionStart injection: re-arm every fresh/compacted session — the exact
@@ -257,12 +341,24 @@ program
         const { findProjectRoot } = require('./core/registry');
         const { liveReceiptFingerprint } = require('./core/receipts');
         let root = options.path ? path.resolve(options.path) : null;
+        let source = '';
         if (!root) {
-            try { root = JSON.parse(fs.readFileSync(0, 'utf8')).cwd; } catch { /* no stdin */ }
+            try { const s = JSON.parse(fs.readFileSync(0, 'utf8')); root = s.cwd; source = s.source || ''; }
+            catch { /* no stdin */ }
+        } else {
+            try { source = JSON.parse(fs.readFileSync(0, 'utf8')).source || ''; } catch { /* path given manually */ }
         }
         root = findProjectRoot(root || process.cwd());
         if (!root) process.exit(0);
         const integrationPath = path.join(root, 'plexus-integration');
+
+        // COMPACTION / CLEAR wipes the conversation the receipts were earned in.
+        // Stale context must re-consult (TTL alone would inherit edit rights
+        // across a summarization boundary), so clear receipts on those sources.
+        if (source === 'compact' || source === 'clear') {
+            try { fs.writeFileSync(path.join(integrationPath, 'receipts.json'), '[]'); } catch { /* fine */ }
+        }
+
         try {
             const state = JSON.parse(fs.readFileSync(path.join(integrationPath, 'plexus-state.json'), 'utf8'));
             const st = state.stats || {};
@@ -339,9 +435,11 @@ program
             if (matcher) entry.matcher = matcher;
             settings.hooks[event].push(entry);
         };
-        ensure('PreToolUse', 'Edit|Write|MultiEdit|NotebookEdit', 'hook-guard', q('hook-guard'));
+        // Bash included: a drifting AI must not slip a `sed -i src/x.ts` past the
+        // structured-edit matcher (hook-guard inspects the shell command too).
+        ensure('PreToolUse', 'Edit|Write|MultiEdit|NotebookEdit|Bash', 'hook-guard', q('hook-guard'));
         ensure('SessionStart', null, 'session-status', q(`session-status -p "${targetPath}"`));
-        ensure('PostToolUse', 'Edit|Write|MultiEdit', 'hook-notify', q('hook-notify'));
+        ensure('PostToolUse', 'Edit|Write|MultiEdit|NotebookEdit', 'hook-notify', q('hook-notify'));
         fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
 
         // 2. strict pre-commit
@@ -394,6 +492,7 @@ program
             console.error('Integration not found. Run "plexus init" first.');
             process.exit(1);
         }
+        const { setContext, setManifest, initDb, graph, CodeAnalyzer } = engine();
         setContext(integrationPath, targetPath);
         const manifestPath = path.join(integrationPath, 'plexus-manifest.json');
         if (fs.existsSync(manifestPath)) setManifest(JSON.parse(fs.readFileSync(manifestPath, 'utf8')));
@@ -504,6 +603,7 @@ program
             console.error('Integration not found. Run "plexus genesis" or "plexus init" first.');
             process.exit(1);
         }
+        const { setContext, setManifest, initDb, graph, CodeAnalyzer } = engine();
         setContext(integrationPath, targetPath);
         initDb(integrationPath);
         graph.loadFromDb();
@@ -563,6 +663,7 @@ program
             console.error('No plexus-proposals.json — run "plexus mine" first.');
             process.exit(1);
         }
+        const { setContext, setManifest, initDb, graph, CodeAnalyzer } = engine();
         setContext(integrationPath, targetPath);
         initDb(integrationPath);
         graph.loadFromDb();

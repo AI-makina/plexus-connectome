@@ -26,12 +26,14 @@ export interface BriefResult {
     consulted_file_paths: string[];
     unresolved: string[];
     truncation_notes: string[];
+    all_resolved_files: string[]; // uncapped — receipt coverage, not display
 }
 
 interface ResolvedTargets {
     targets: PlexusNode[];
     unresolved: string[];
     overflow: number;
+    all_files: string[]; // every resolved file, uncapped — for receipt coverage
 }
 
 const MAX_TARGETS = 5;
@@ -76,7 +78,12 @@ function resolveTargets(req: BriefRequest): ResolvedTargets {
     const all = Array.from(found.values());
     // Hubs first: connection_count is the one health signal that is real today
     all.sort((a, b) => (b.health?.connection_count ?? 0) - (a.health?.connection_count ?? 0));
-    return { targets: all.slice(0, MAX_TARGETS), unresolved, overflow: Math.max(0, all.length - MAX_TARGETS) };
+    // Receipt coverage is the FULL resolved set, not the 5 displayed — else a
+    // query consult that resolves 20 files would false-block edits to the 15
+    // the AI genuinely consulted (a false block is how an AI learns to distrust
+    // and abandon Plexus).
+    const all_files = Array.from(new Set(all.map(n => normPath(n.file_path))));
+    return { targets: all.slice(0, MAX_TARGETS), unresolved, overflow: Math.max(0, all.length - MAX_TARGETS), all_files };
 }
 
 /** The synapse that carried the impact to this blast node (last path hop). */
@@ -107,7 +114,7 @@ const trunc = (s: string, n: number) => (s && s.length > n ? s.slice(0, n - 1) +
 
 export function buildBrief(req: BriefRequest, simulator: ImpactSimulator): BriefResult {
     const mode = req.mode || 'building';
-    const { targets, unresolved, overflow } = resolveTargets(req);
+    const { targets, unresolved, overflow, all_files } = resolveTargets(req);
     const truncationNotes: string[] = [];
     if (overflow > 0) truncationNotes.push(`${overflow} additional matched nodes beyond the ${MAX_TARGETS}-target cap`);
 
@@ -277,5 +284,6 @@ export function buildBrief(req: BriefRequest, simulator: ImpactSimulator): Brief
         consulted_file_paths: filePaths,
         unresolved,
         truncation_notes: Array.from(new Set(truncationNotes)),
+        all_resolved_files: all_files,
     };
 }

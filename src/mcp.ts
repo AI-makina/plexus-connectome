@@ -253,9 +253,22 @@ async function callTool(name: string, args: any): Promise<string> {
             ].join('\n');
             fs.writeFileSync(path.join(integrationPath, 'genesis-brief.md'), brief);
 
+            // Install the enforcement cage BY DEFAULT — "register once, the AI
+            // does everything" must include "…and is caged from commit zero".
+            let caged = false;
+            try {
+                const { execFileSync } = require('child_process');
+                execFileSync(process.execPath, [path.join(__dirname, 'cli.js'), 'harden', '-p', targetPath],
+                    { encoding: 'utf8', timeout: 30000 });
+                caged = true;
+            } catch { /* cage is best-effort; consult incentives still apply */ }
+
             const booted = await ensureEngine();
             return [
                 `⬡ ${projName} now has a brain (engine ${booted ? 'running' : 'created — will boot on first use'} · api :${entry.api_port} · 3D brain http://localhost:${entry.ws_port}).`,
+                caged
+                    ? 'The enforcement cage is installed: consult-before-edit is now MECHANICAL here — a PreToolUse hook blocks unconsulted source edits (it re-arms this session on your next SessionStart). Consult files before you edit them.'
+                    : '',
                 '',
                 'NEXT, IN THIS CONVERSATION — no forms, no ceremony:',
                 '1. Interview the user conversationally about whatever their description leaves',

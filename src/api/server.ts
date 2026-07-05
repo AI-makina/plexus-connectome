@@ -17,6 +17,7 @@ import {
 import { checkClaims } from '../core/symbolIndex';
 import { buildBrief } from '../core/brief';
 import { familyOf } from '../core/families';
+import { issueReceipt } from '../core/receipts';
 import { getIntegrationPath } from '../core/context';
 
 export const app = express();
@@ -347,8 +348,10 @@ app.post('/api/claim-check', (req, res) => {
         const matchedNodeIds = results.flatMap(r => r.matches.map(m => m.node_id));
         const matchedFiles = Array.from(new Set(results.flatMap(r => r.matches.map(m => m.file_path))));
         const consultationId = recordConsultation('claim_check', matchedNodeIds, matchedFiles);
+        const receipt = issueReceipt(getIntegrationPath(), 'claim_check', matchedFiles);
         res.json({
             consultation_id: consultationId,
+            receipt: { id: receipt.id, fingerprint: receipt.nonce.slice(0, 4), covers: receipt.files },
             scope: 'TS/JS symbols, components, hooks, endpoints, env vars, types, modules — categories outside the scanned graph answer out_of_scope',
             results,
         });
@@ -370,7 +373,19 @@ app.post('/api/consult', (req, res) => {
     try {
         const brief = buildBrief({ node_ids, query, file_paths, mode }, simulator);
         const consultationId = recordConsultation('consult', brief.consulted_node_ids, brief.consulted_file_paths);
-        res.json({ consultation_id: consultationId, ...brief });
+        // The receipt covers what the brief resolved AND the file_paths the
+        // caller declared it's about to touch — so consulting a file you're
+        // about to CREATE (no node yet) still earns the right to edit it.
+        const covered = Array.from(new Set([
+            ...(brief.consulted_file_paths || []),
+            ...((Array.isArray(file_paths) ? file_paths : []) as string[]),
+        ]));
+        const receipt = issueReceipt(getIntegrationPath(), 'consult', covered);
+        res.json({
+            consultation_id: consultationId,
+            receipt: { id: receipt.id, fingerprint: receipt.nonce.slice(0, 4), covers: receipt.files },
+            ...brief,
+        });
     } catch (err: any) {
         res.status(500).json({ error: err.message });
     }

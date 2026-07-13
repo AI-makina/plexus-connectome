@@ -24,6 +24,8 @@ import {
     setResolutionStatus, confirmResolution, flagRegressionRisk, linkAmygdala, linkInvariant,
 } from '../core/resolutions';
 import { ResolutionStatus, ConfirmationVerdict } from '../types';
+import { engineVersion } from '../core/engineVersion';
+import { spawn } from 'child_process';
 
 export const app = express();
 
@@ -379,6 +381,34 @@ app.post('/api/resolutions/:id/link', (req, res) => {
     if (amygdala_id) r = linkAmygdala(req.params.id, amygdala_id);
     if (invariant_id) r = linkInvariant(req.params.id, invariant_id);
     res.json(r);
+});
+
+// ─── Engine self-update ──────────────────────────────────────────
+// One-click "bring this connectome onto the latest Plexus" — no per-brain terminal
+// restart. Rebuild the shared dist once; each viz sees update_available and can apply.
+
+app.get('/api/engine/version', (_req, res) => {
+    res.json(engineVersion());
+});
+
+// Token-guarded (global authMiddleware). Re-execs this process on the current build:
+// migrations re-run (additive), new code + viz load. A boot delay in the child lets
+// this process release the port first (clean handoff); the viz auto-reconnects.
+app.post('/api/engine/restart', (_req, res) => {
+    const v = engineVersion();
+    res.json({ restarting: true, ...v, note: 'Engine re-executing on the current build — reconnect shortly.' });
+    setTimeout(() => {
+        try {
+            const child = spawn(process.execPath, process.argv.slice(1), {
+                detached: true,
+                stdio: 'ignore',
+                cwd: process.cwd(),
+                env: { ...process.env, PLEXUS_BOOT_DELAY_MS: '1200', PLEXUS_NO_OPEN: '1' },
+            });
+            child.unref();
+        } catch { /* spawn failed → no restart, process keeps running */ }
+        process.exit(0);
+    }, 400);
 });
 
 // ─── Feedback System ─────────────────────────────────────────────

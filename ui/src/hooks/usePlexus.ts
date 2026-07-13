@@ -78,6 +78,7 @@ export function usePlexus() {
     const [simulationResult, setSimulationResult] = useState<any | null>(null);
     const [simulationTimestamp, setSimulationTimestamp] = useState<number | null>(null);
     const [project, setProject] = useState<ProjectIdentity | null>(null);
+    const [engineVersion, setEngineVersion] = useState<any | null>(null);
 
     // Region filter (DESIGN_SPEC §5.7) — independent of showDormant to avoid
     // combinatorial filter bugs. Empty Set = all regions visible.
@@ -158,6 +159,11 @@ export function usePlexus() {
                 const p = await axios.get(`${API_BASE}/api/project`);
                 if (p.data?.name) setProject(p.data);
             } catch { /* chip hidden */ }
+            // Engine self-update signal (non-fatal: old engines lack the route)
+            try {
+                const ev = await axios.get(`${API_BASE}/api/engine/version`);
+                setEngineVersion(ev.data);
+            } catch { setEngineVersion(null); }
         } catch (e) {
             console.error("Failed to fetch Plexus data", e);
             handleFetchFailure(e);
@@ -169,6 +175,15 @@ export function usePlexus() {
 
     const retryNow = () => {
         fetchData(); // clears any pending countdown itself
+    };
+
+    // Bring this connectome onto the latest build. The engine re-execs; the link
+    // drops briefly, then the normal retry loop reconnects on the new code.
+    const restartEngine = async () => {
+        await ensureSessionToken();
+        try { await axios.post(`${API_BASE}/api/engine/restart`, {}); } catch { /* engine exits mid-response */ }
+        setLinkLost(true);
+        setTimeout(() => fetchData(), 2500); // give the child time to bind, then reconnect
     };
 
     const runSimulation = async (nodeId: string) => {
@@ -229,6 +244,8 @@ export function usePlexus() {
     return {
         data,
         loading,
+        engineVersion,
+        restartEngine,
         selectedNode,
         setSelectedNode,
         searchQuery,

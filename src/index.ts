@@ -192,33 +192,46 @@ if (manifest?.analysis?.watch_for_changes !== false) {
     console.log('[Plexus Engine] Drift sweep active (5s fingerprint diff — out-of-band edits are absorbed automatically)');
 }
 
-// Start Backend Server — 127.0.0.1 ONLY. The previous 0.0.0.0 bind exposed an
-// unauthenticated graph-mutation API to the entire LAN.
-app.listen(PORT as number, '127.0.0.1', () => {
-    console.log(`[Plexus Engine] API Server running on port ${PORT}`);
-    console.log(`[Plexus Engine] Integration Path: ${integrationPath}`);
-});
+// Bind both servers. Wrapped so a self-restart (POST /api/engine/restart) can pass
+// PLEXUS_BOOT_DELAY_MS to the replacement child, which waits before binding so the
+// exiting parent releases the ports first — a clean handoff, no EADDRINUSE.
+function startServers() {
+    // Backend — 127.0.0.1 ONLY. The previous 0.0.0.0 bind exposed an
+    // unauthenticated graph-mutation API to the entire LAN.
+    app.listen(PORT as number, '127.0.0.1', () => {
+        console.log(`[Plexus Engine] API Server running on port ${PORT}`);
+        console.log(`[Plexus Engine] Integration Path: ${integrationPath}`);
+    });
 
-// Start UI Server
-const uiApp = express();
-const uiPath = path.join(__dirname, '../ui/dist');
-const UI_PORT = UI_PORT_FROM_MANIFEST;
+    // UI Server
+    const uiApp = express();
+    const uiPath = path.join(__dirname, '../ui/dist');
+    const UI_PORT = UI_PORT_FROM_MANIFEST;
 
-// Force browser to never cache the UI bundle while we debug
-uiApp.use((req, res, next) => {
-    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-    res.set('Pragma', 'no-cache');
-    res.set('Expires', '0');
-    next();
-});
+    // Force browser to never cache the UI bundle while we debug
+    uiApp.use((req, res, next) => {
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+        res.set('Pragma', 'no-cache');
+        res.set('Expires', '0');
+        next();
+    });
 
-uiApp.use(express.static(uiPath));
-uiApp.use((_req, res) => res.sendFile(path.join(uiPath, 'index.html')));
+    uiApp.use(express.static(uiPath));
+    uiApp.use((_req, res) => res.sendFile(path.join(uiPath, 'index.html')));
 
-uiApp.listen(UI_PORT as number, '127.0.0.1', () => {
-    console.log(`[Plexus Engine] UI Server running on port ${UI_PORT}`);
-    // Only auto-open browser if not launched by a parent process (e.g., Areopagus)
-    if (!process.env.PLEXUS_NO_OPEN) {
-        open(`http://localhost:${UI_PORT}`);
-    }
-});
+    uiApp.listen(UI_PORT as number, '127.0.0.1', () => {
+        console.log(`[Plexus Engine] UI Server running on port ${UI_PORT}`);
+        // Only auto-open browser if not launched by a parent process (e.g., Areopagus)
+        if (!process.env.PLEXUS_NO_OPEN) {
+            open(`http://localhost:${UI_PORT}`);
+        }
+    });
+}
+
+const bootDelay = parseInt(process.env.PLEXUS_BOOT_DELAY_MS || '0', 10);
+if (bootDelay > 0) {
+    console.log(`[Plexus Engine] Restart handoff — waiting ${bootDelay}ms for the previous process to release ports…`);
+    setTimeout(startServers, bootDelay);
+} else {
+    startServers();
+}

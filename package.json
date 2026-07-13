@@ -9,7 +9,8 @@
   "scripts": {
     "start": "ts-node src/index.ts",
     "dev": "nodemon src/index.ts",
-    "build": "tsc"
+    "build": "tsc && npm run stamp",
+    "stamp": "node -e \"require('fs').writeFileSync('dist/BUILD_ID', Date.now().toString())\""
   },
   "keywords": [],
   "author": "",

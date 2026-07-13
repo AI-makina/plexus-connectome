@@ -13,6 +13,7 @@ export interface ProjectEntry {
     ws_port: number;
     created_at: string;
     kind: 'genesis' | 'connected';
+    owner?: string; // customer this connectome belongs to (Plexus Manager / CRM)
 }
 export interface Registry { projects: ProjectEntry[]; next_port: number }
 

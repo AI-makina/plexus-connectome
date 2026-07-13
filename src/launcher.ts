@@ -5,6 +5,7 @@ import path from 'path';
 import http from 'http';
 import { spawn, execFileSync } from 'child_process';
 import { LAUNCHER_HTML } from './launcherPage';
+import { MANAGER_HTML } from './managerPage';
 
 // ─── The Plexus Launcher — the plug-and-play front door ───────────────────────
 // `plexus start` opens ONE window where everything begins:
@@ -38,6 +39,27 @@ function probe(port: number): Promise<boolean> {
         req.on('error', () => resolve(false));
         req.on('timeout', () => { req.destroy(); resolve(false); });
     });
+}
+
+// Pull a JSON endpoint from a running connectome engine (null if down/malformed).
+function fetchJson(port: number, apiPath: string): Promise<any> {
+    return new Promise(resolve => {
+        const req = http.get({ host: '127.0.0.1', port, path: apiPath, timeout: 1500 }, res => {
+            let body = '';
+            res.on('data', c => { body += c; });
+            res.on('end', () => { try { resolve(JSON.parse(body)); } catch { resolve(null); } });
+        });
+        req.on('error', () => resolve(null));
+        req.on('timeout', () => { req.destroy(); resolve(null); });
+    });
+}
+
+// Cosmetic display name from the manifest (else null — caller falls back to folder name).
+function readDisplayName(projectPath: string): string | null {
+    try {
+        const m = JSON.parse(fs.readFileSync(path.join(projectPath, 'plexus-integration', 'plexus-manifest.json'), 'utf8'));
+        return m?.visualization?.display_name || null;
+    } catch { return null; }
 }
 
 // ─── Server ───────────────────────────────────────────────────────────────────
@@ -84,6 +106,58 @@ export function startLauncher(open = true) {
             // and init_project lets the AI create brains itself.
             global_mcp: `claude mcp add --scope user plexus -- node "${CLI}" mcp`,
         });
+    });
+
+    // ─── Plexus Manager (vendor CRM) ────────────────────────────────────────
+    app.get('/manager', (_req, res) => {
+        res.set('Content-Type', 'text/html').send(MANAGER_HTML);
+    });
+
+    // Customers → their connectomes, with live version + effectiveness pulled from
+    // each running engine. Local-first (this machine's registry) — the phone-home
+    // layer for remote clients is a separate, later phase.
+    app.get('/api/launcher/manager', async (_req, res) => {
+        const reg = loadRegistry();
+        const customers: Record<string, any[]> = {};
+        for (const p of reg.projects) {
+            const running = await probe(p.api_port);
+            let live: any = null;
+            if (running) {
+                const [ver, eff] = await Promise.all([
+                    fetchJson(p.api_port, '/api/engine/version'),
+                    fetchJson(p.api_port, '/api/effectiveness'),
+                ]);
+                live = {
+                    version: ver?.version ?? null,
+                    update_available: ver?.update_available ?? false,
+                    score: eff?.effectiveness_score ?? null,
+                    hallucinations_caught: eff?.claim_check?.missing ?? 0,
+                    divergences: eff?.divergences ? Object.values(eff.divergences).reduce((a: number, b: any) => a + b, 0) : 0,
+                    planned_ratio: eff?.structure_health?.planned_ratio ?? null,
+                };
+            }
+            const owner = (p.owner && p.owner.trim()) || 'Unassigned';
+            (customers[owner] = customers[owner] || []).push({
+                name: p.name,
+                display_name: readDisplayName(p.path) || p.name,
+                path: p.path,
+                api_port: p.api_port,
+                running,
+                live,
+            });
+        }
+        res.json({ customers });
+    });
+
+    // Assign a connectome to a customer.
+    app.post('/api/launcher/owner', (req, res) => {
+        const { path: projectPath, owner } = req.body || {};
+        const reg = loadRegistry();
+        const proj = reg.projects.find(p => p.path === projectPath);
+        if (!proj) return res.status(404).json({ error: 'connectome not in registry' });
+        proj.owner = (typeof owner === 'string' && owner.trim()) ? owner.trim() : undefined;
+        saveRegistry(reg);
+        res.json({ ok: true, owner: proj.owner || null });
     });
 
     // Minimal directory browser for "connect existing"

@@ -38,6 +38,8 @@ export const MANAGER_HTML = `<!doctype html>
   .fname { font:11px var(--mono); color:var(--ghost); }
   .ver { margin-left:auto; font:11px var(--mono); color:var(--mid); display:flex; align-items:center; gap:8px; }
   .upd { color:var(--green); font-size:10px; border:1px solid rgba(61,154,103,.4); border-radius:4px; padding:1px 5px; }
+  .upd-btn { color:#08090B; background:var(--green); border:none; font:600 10px var(--mono); border-radius:4px; padding:3px 9px; cursor:pointer; margin-left:2px; }
+  .upd-btn:disabled { opacity:.55; cursor:default; }
   .row2 { display:flex; align-items:center; gap:18px; margin-top:11px; }
   .score { display:flex; align-items:center; gap:8px; }
   .score .num { font:600 18px var(--mono); }
@@ -57,7 +59,7 @@ export const MANAGER_HTML = `<!doctype html>
   <span class="tag">vendor control-plane · local</span>
   <span class="right"><a class="back" href="/">← launcher</a> &nbsp; auto-refresh 12s</span>
 </header>
-<div class="bulk">Put all connectomes under: <input id="bulk-name" placeholder="your name"><button onclick="assignAll()">Apply to all</button></div>
+<div class="bulk">Put all connectomes under: <input id="bulk-name" placeholder="your name"><button onclick="assignAll()">Apply to all</button><span style="margin-left:auto"></span><button onclick="updateAll()">Update all outdated</button></div>
 <div class="wrap" id="wrap"><div class="muted">Loading connectomes…</div></div>
 <script>
 function scoreColor(s){ if(s==null) return 'var(--ghost)'; if(s>=75) return 'var(--green)'; if(s>=50) return 'var(--amber)'; return 'var(--red)'; }
@@ -77,8 +79,10 @@ function renderConnectome(c){
       + '<span class="stat">divergences <b>'+(live.divergences||0)+'</b></span>'
       + (live.planned_ratio!=null ? '<span class="stat">planned <b>'+Math.round(live.planned_ratio*100)+'%</b></span>' : '')
     : '';
+  var updBtn = (c.running && live.update_available)
+    ? '<button class="upd-btn" data-path="'+esc(c.path)+'" onclick="sendUpdate(this)">Send update</button>' : '';
   var ver = c.running
-    ? '<span class="ver">v'+esc(live.version||'?')+(live.update_available?'<span class="upd">update</span>':'')+'</span>'
+    ? '<span class="ver">v'+esc(live.version||'?')+updBtn+'</span>'
     : '<span class="ver muted">stopped</span>';
   return '<div class="card">'
     + '<div class="row1"><span class="dot" style="background:'+dotCol+'"></span>'
@@ -108,6 +112,22 @@ function assignAll(){
   if(!owner) return;
   fetch('/api/launcher/assign-all', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({owner:owner})})
     .then(function(){ document.getElementById('bulk-name').value=''; load(); });
+}
+
+function sendUpdate(btn){
+  btn.disabled=true; btn.textContent='sending…';
+  fetch('/api/launcher/update', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({path:btn.getAttribute('data-path')})})
+    .then(function(r){return r.json();}).then(function(){ setTimeout(load, 3500); });
+}
+
+function updateAll(){
+  fetch('/api/launcher/manager').then(function(r){return r.json();}).then(function(d){
+    var paths=[];
+    Object.keys(d.customers||{}).forEach(function(o){ (d.customers[o]||[]).forEach(function(c){ if(c.running && (c.live||{}).update_available) paths.push(c.path); }); });
+    if(!paths.length) return;
+    Promise.all(paths.map(function(p){ return fetch('/api/launcher/update',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({path:p})}); }))
+      .then(function(){ setTimeout(load, 3500); });
+  });
 }
 
 function load(){

@@ -54,6 +54,23 @@ function fetchJson(port: number, apiPath: string): Promise<any> {
     });
 }
 
+// POST to a connectome engine with its own session token (read from the brain folder),
+// so the manager can trigger token-guarded actions like self-update.
+function postEngine(projectPath: string, port: number, apiPath: string): Promise<boolean> {
+    let token = '';
+    try { token = fs.readFileSync(path.join(projectPath, 'plexus-integration', 'session-token'), 'utf8').trim(); } catch { /* auth-disabled or no token */ }
+    return new Promise(resolve => {
+        const body = '{}';
+        const req = http.request({
+            host: '127.0.0.1', port, path: apiPath, method: 'POST', timeout: 4000,
+            headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-plexus-token': token },
+        }, res => { res.resume(); resolve(!!res.statusCode && res.statusCode < 400); });
+        req.on('error', () => resolve(false));
+        req.on('timeout', () => { req.destroy(); resolve(false); });
+        req.write(body); req.end();
+    });
+}
+
 // Cosmetic display name from the manifest (else null — caller falls back to folder name).
 function readDisplayName(projectPath: string): string | null {
     try {
@@ -185,6 +202,18 @@ export function startLauncher(open = true) {
         for (const p of reg.projects) p.owner = owner;
         saveRegistry(reg);
         res.json({ ok: true, count: reg.projects.length, owner });
+    });
+
+    // Send the update to a connectome — triggers its engine self-update (token-authenticated).
+    // Only works if the engine is running; the client's viz reconnects on the new build.
+    app.post('/api/launcher/update', async (req, res) => {
+        const { path: projectPath } = req.body || {};
+        const reg = loadRegistry();
+        const proj = reg.projects.find(p => p.path === projectPath);
+        if (!proj) return res.status(404).json({ error: 'connectome not registered' });
+        if (!(await probe(proj.api_port))) return res.status(409).json({ error: 'engine not running — start it first' });
+        const ok = await postEngine(proj.path, proj.api_port, '/api/engine/restart');
+        res.json({ ok, name: proj.name });
     });
 
     // Minimal directory browser for "connect existing"

@@ -77,6 +77,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
 <div class="wrap">
   <header>
     <span class="glyph">⬡</span><h1>PLEXUS</h1><span class="tag">launcher · evidence protocol</span>
+    <a href="/manager" style="margin-left:auto;color:var(--azure);text-decoration:none;font:500 12px var(--sans)">Manager →</a>
   </header>
 
   <!-- HOME -->

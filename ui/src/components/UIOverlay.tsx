@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, Play, X, Moon, Crosshair, AlertTriangle } from 'lucide-react';
+import { Search, Play, X, Moon, Crosshair, AlertTriangle, Pencil } from 'lucide-react';
 import clsx from 'clsx';
 import { REGIONS, REGION_COLORS } from '../theme/regions';
 import { LogoMark } from './Brand';
@@ -18,6 +18,78 @@ function regionHex(region: string): string {
 
 function regionLabel(region: string): string {
     return (REGIONS as any)[region]?.label || String(region || '').replace(/_/g, ' ');
+}
+
+// ── Project identity chip (top bar): which brain is this tab looking at? ──
+// The name shown is visualization.display_name (if set) else target_app.name.
+// Editing here is DISPLAY-ONLY: it writes manifest.visualization.display_name
+// through the engine and never touches structural identity (folder path,
+// target_app.name, registry, receipts) — renaming can break no pathway.
+// Enter saves · Esc/blur cancels · empty resets to the project's real name.
+function ProjectNameChip({ project, onRename }: any) {
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState('');
+    const [busy, setBusy] = useState(false);
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        if (project?.name) document.title = `${project.name} — Plexus`;
+    }, [project?.name]);
+
+    if (!project) return null;
+
+    const startEdit = () => {
+        setDraft(project.display_name || project.app_name || '');
+        setEditing(true);
+        requestAnimationFrame(() => inputRef.current?.select());
+    };
+
+    const commit = async () => {
+        if (busy) return;
+        const next = draft.trim();
+        setBusy(true);
+        try {
+            // Typing the real name back (or clearing) removes the override.
+            await onRename(next && next !== project.app_name ? next : null);
+            setEditing(false);
+        } catch (e) {
+            console.error('Display rename failed', e);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <>
+            <div className="h-3 w-px bg-line" />
+            {editing ? (
+                <input
+                    ref={inputRef}
+                    value={draft}
+                    disabled={busy}
+                    maxLength={48}
+                    placeholder={project.app_name}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') commit();
+                        if (e.key === 'Escape') setEditing(false);
+                    }}
+                    onBlur={() => setEditing(false)}
+                    className="w-36 bg-transparent text-[13px] text-text-hi outline-none placeholder:text-text-ghost"
+                />
+            ) : (
+                <button
+                    type="button"
+                    onClick={startEdit}
+                    title={`${project.name} — display name for this connectome. Click to rename (visual only; folder and pathway structure are untouched).`}
+                    className="group flex min-w-0 max-w-44 items-center gap-1.5"
+                >
+                    <span className="truncate text-[13px] text-text-hi">{project.name}</span>
+                    <Pencil size={11} className="shrink-0 text-text-ghost opacity-0 transition-opacity group-hover:opacity-100" />
+                </button>
+            )}
+        </>
+    );
 }
 
 // ── Shared section anatomy (§5.8): micro-label + 12px gap + full-bleed hairline ──
@@ -749,6 +821,7 @@ export default function UIOverlay({ plexus }: any) {
                             <LogoMark size={16} className="text-text-hi" />
                             <span className="wordmark">Plexus</span>
                             <span className="font-mono text-[10px] text-text-ghost">v0.1</span>
+                            <ProjectNameChip project={plexus.project} onRename={plexus.renameProject} />
                         </div>
                         <div className="my-2 w-px self-stretch bg-line" />
                         <div className="flex w-80 items-center gap-2 px-3">

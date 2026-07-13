@@ -18,7 +18,12 @@ import { checkClaims } from '../core/symbolIndex';
 import { buildBrief } from '../core/brief';
 import { familyOf } from '../core/families';
 import { issueReceipt } from '../core/receipts';
-import { getIntegrationPath } from '../core/context';
+import { getIntegrationPath, getManifest, getTargetPath, setManifest } from '../core/context';
+import {
+    createResolution, getResolution, listResolutions, listPendingConfirmation,
+    setResolutionStatus, confirmResolution, flagRegressionRisk, linkAmygdala, linkInvariant,
+} from '../core/resolutions';
+import { ResolutionStatus, ConfirmationVerdict } from '../types';
 
 export const app = express();
 
@@ -50,6 +55,62 @@ app.get('/api/session', (_req, res) => {
         token_file: getTokenFilePath(),
         usage: 'send header x-plexus-token on every POST/PUT/DELETE',
     });
+});
+
+// ─── Project identity ────────────────────────────────────────────
+// A brain's STRUCTURAL identity is its path + target_app.name (set at init,
+// changed only by deliberately renaming the folder / re-initializing). The
+// DISPLAY name is a cosmetic overlay so multiple open connectomes can be told
+// apart in the viz — it lives in manifest.visualization and is never used for
+// resolution (registry, MCP cwd-walk, receipts), so renaming it breaks nothing.
+
+function projectIdentity() {
+    const m = getManifest();
+    let rootPath: string | null = null;
+    try { rootPath = getTargetPath(); } catch { /* context not initialized */ }
+    const appName = m?.target_app?.name || (rootPath ? path.basename(rootPath) : 'Untitled brain');
+    const displayName = m?.visualization?.display_name || null;
+    return {
+        name: displayName || appName,
+        app_name: appName,
+        display_name: displayName,
+        root_path: rootPath,
+    };
+}
+
+app.get('/api/project', (_req, res) => {
+    res.json(projectIdentity());
+});
+
+app.put('/api/project/display-name', (req, res) => {
+    const raw = req.body?.display_name;
+    if (raw !== null && raw !== undefined && typeof raw !== 'string') {
+        return res.status(400).json({ error: 'display_name must be a string or null' });
+    }
+    // Control characters would corrupt the manifest/header; collapse
+    // whitespace to keep the chip honest. Empty or null clears the override
+    // back to target_app.name.
+    const cleaned = (raw || '').replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (cleaned.length > 48) {
+        return res.status(400).json({ error: 'display_name too long (max 48 chars)' });
+    }
+    const manifestPath = path.join(getIntegrationPath(), 'plexus-manifest.json');
+    if (!fs.existsSync(manifestPath)) {
+        return res.status(404).json({ error: 'no plexus-manifest.json for this brain' });
+    }
+    try {
+        // Patch the FILE fresh (same discipline as patchManifestPorts) so a
+        // concurrent out-of-band manifest edit is not clobbered from memory.
+        const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+        m.visualization = m.visualization || {};
+        if (cleaned) m.visualization.display_name = cleaned;
+        else delete m.visualization.display_name;
+        fs.writeFileSync(manifestPath, JSON.stringify(m, null, 2));
+        setManifest(m); // keep this boot's in-memory copy in sync
+        res.json(projectIdentity());
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // ─── Nodes ───────────────────────────────────────────────────────
@@ -263,6 +324,61 @@ app.post('/api/amygdala', (req, res) => {
     } catch (err: any) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// ─── Resolutions (fix lifecycle + confirmation) ──────────────────
+// The engine owns the lifecycle; apps render the confirm box and relay verdicts.
+
+app.get('/api/resolutions', (req, res) => {
+    const status = req.query.status as ResolutionStatus | undefined;
+    const confirmation = req.query.confirmation as ConfirmationVerdict | undefined;
+    res.json(listResolutions({ status, confirmation }));
+});
+
+// pending MUST precede /:id so it isn't captured as an id
+app.get('/api/resolutions/pending', (_req, res) => {
+    res.json(listPendingConfirmation());
+});
+
+app.post('/api/resolutions', (req, res) => {
+    const { issue, target_nodes, status, simulation_ref, source_app } = req.body || {};
+    if (!issue || typeof issue !== 'string') return res.status(400).json({ error: 'issue (string) is required' });
+    res.json(createResolution({ issue, target_nodes, status, simulation_ref, source_app }));
+});
+
+app.get('/api/resolutions/:id', (req, res) => {
+    const r = getResolution(req.params.id);
+    if (!r) return res.status(404).json({ error: 'Resolution not found' });
+    res.json(r);
+});
+
+// The confirm box posts here: { verdict: solved|partial|not_solved, comment? }
+app.post('/api/resolutions/:id/confirm', (req, res) => {
+    const { verdict, comment } = req.body || {};
+    const valid: ConfirmationVerdict[] = ['unconfirmed', 'solved', 'partial', 'not_solved'];
+    if (!valid.includes(verdict)) return res.status(400).json({ error: `verdict must be one of: ${valid.join(', ')}` });
+    const r = confirmResolution(req.params.id, verdict, comment);
+    if (!r) return res.status(404).json({ error: 'Resolution not found' });
+    res.json(r);
+});
+
+// Apps report lifecycle transitions (e.g. applied, conditional after an AI test passes).
+app.post('/api/resolutions/:id/status', (req, res) => {
+    const { status } = req.body || {};
+    const valid: ResolutionStatus[] = ['wip', 'applied', 'conditional', 'unconditional', 'partial', 'failed', 'regression_risk', 'blocked'];
+    if (!valid.includes(status)) return res.status(400).json({ error: `status must be one of: ${valid.join(', ')}` });
+    const r = setResolutionStatus(req.params.id, status);
+    if (!r) return res.status(404).json({ error: 'Resolution not found' });
+    res.json(r);
+});
+
+app.post('/api/resolutions/:id/link', (req, res) => {
+    const { amygdala_id, invariant_id } = req.body || {};
+    if (!getResolution(req.params.id)) return res.status(404).json({ error: 'Resolution not found' });
+    let r = getResolution(req.params.id);
+    if (amygdala_id) r = linkAmygdala(req.params.id, amygdala_id);
+    if (invariant_id) r = linkInvariant(req.params.id, invariant_id);
+    res.json(r);
 });
 
 // ─── Feedback System ─────────────────────────────────────────────

@@ -134,9 +134,32 @@ export function initDb(integrationPath: string): Database.Database {
     );
   `);
 
+  // Resolution lifecycle — issues and their fix-status over time. Links nodes
+  // (targets), amygdala (failed attempts), and invariants (cemented truth).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS resolutions (
+      id TEXT PRIMARY KEY,
+      issue TEXT NOT NULL,
+      target_nodes TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'wip',
+      confirmation TEXT NOT NULL DEFAULT 'unconfirmed',
+      comment TEXT,
+      amygdala_ids TEXT,
+      invariant_id TEXT,
+      simulation_ref TEXT,
+      attempts INTEGER NOT NULL DEFAULT 1,
+      source_app TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      confirmed_at TEXT
+    );
+  `);
+
   // Indexes for performance
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_consultations_ts ON consultations(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_resolutions_status ON resolutions(status);
+    CREATE INDEX IF NOT EXISTS idx_resolutions_confirmation ON resolutions(confirmation);
     CREATE INDEX IF NOT EXISTS idx_nodes_region ON nodes(region);
     CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(type);
     CREATE INDEX IF NOT EXISTS idx_synapses_source ON synapses(source_node_id);

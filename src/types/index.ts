@@ -179,6 +179,48 @@ export interface AmygdalaEntry {
     status: 'active' | 'resolved' | 'superseded';
 }
 
+// ─── Resolution lifecycle ────────────────────────────────────────────────
+// A first-class record of an ISSUE and its fix-status over time — the layer that
+// links nodes (what was touched), amygdala (failed attempts), and invariants
+// (cemented truth). App-agnostic: any app that plugs into Plexus reads/writes these.
+
+/** Where a fix sits in its lifecycle.
+ *  wip → applied → conditional (AI-tested, a PROXY) → unconditional (user-confirmed).
+ *  partial / failed are terminal-ish; regression_risk = was unconditional but a later
+ *  change's simulation rippled into it (auto-demoted); blocked = can't fix without
+ *  breaking a cemented resolution. */
+export type ResolutionStatus =
+    | 'wip' | 'applied' | 'conditional' | 'unconditional'
+    | 'partial' | 'failed' | 'regression_risk' | 'blocked';
+
+/** The user's verdict from the confirmation prompt ([Solved][Partially][Not solved]). */
+export type ConfirmationVerdict = 'unconfirmed' | 'solved' | 'partial' | 'not_solved';
+
+export interface Resolution {
+    id: string;
+    /** Quick human description of the issue — what the confirm box shows. */
+    issue: string;
+    /** Node ids the fix touched (the visual targets on the connectome). */
+    target_nodes: string[];
+    status: ResolutionStatus;
+    confirmation: ConfirmationVerdict;
+    /** User's note on confirm — a verdict OR a request for info (bidirectional). */
+    comment?: string;
+    /** Linked amygdala entries — the failed attempts for this issue. */
+    amygdala_ids: string[];
+    /** Set when cemented: user-confirmed unconditional fixes become an invariant. */
+    invariant_id?: string;
+    /** The blast-radius simulation captured when the fix was applied. */
+    simulation_ref?: string;
+    /** How many times this issue has been worked (thrash signal). */
+    attempts: number;
+    /** Which app created it (areopagus, terminal, …) — provenance, no coupling. */
+    source_app?: string;
+    created_at: string;
+    updated_at: string;
+    confirmed_at?: string;
+}
+
 // Simulation types (moved from simulator.ts)
 export interface ImpactNode {
     node_id: string;
@@ -204,6 +246,19 @@ export interface SimulationResult {
     recommendation: string;
     /** planned-node reaches (0.5× strength) — reported separately, never in risk_score */
     planned_impact?: number;
+    /** Resolutions whose fixed nodes lie in this change's blast radius — the
+     *  regression gate. An 'unconditional' hit means the change threatens a
+     *  user-confirmed fix; a real (non-dryRun) sim demotes it to regression_risk. */
+    resolution_conflicts?: ResolutionConflict[];
+}
+
+export interface ResolutionConflict {
+    resolution_id: string;
+    issue: string;
+    status: ResolutionStatus;
+    confirmation: ConfirmationVerdict;
+    /** the affected target nodes (intersection with the blast radius) */
+    nodes: string[];
 }
 
 // Analysis status
@@ -250,6 +305,10 @@ export interface PlexusManifest {
         enable_fog: boolean;
         enable_audio: boolean;
         default_camera_position: { x: number; y: number; z: number };
+        // Cosmetic label for the viz header only — never used to resolve a
+        // brain (that is always path + target_app.name), so renaming it can
+        // break nothing.
+        display_name?: string;
     };
     regions: {
         custom_overrides: Record<string, Region>;

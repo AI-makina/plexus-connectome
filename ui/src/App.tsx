@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { usePlexus } from './hooks/usePlexus';
 import NetworkGraph from './components/NetworkGraph';
 import UIOverlay from './components/UIOverlay';
+import ResolutionsPanel from './components/ResolutionsPanel';
 import ErrorBoundary from './ErrorBoundary';
 import { LogoMark } from './components/Brand';
 
@@ -54,6 +55,7 @@ function App() {
         {/* UI Overlay Layer */}
         <div className="absolute inset-0 z-10 pointer-events-none">
           <UIOverlay plexus={plexus} />
+          <ResolutionsPanel plexus={plexus} />
         </div>
       </div>
     </ErrorBoundary>

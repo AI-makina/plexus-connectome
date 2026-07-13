@@ -55,10 +55,21 @@ export interface PlexusData {
     nodes: any[];
     synapses: any[];
     amygdala: any[];
+    resolutions: any[];
+}
+
+// Which brain is this tab looking at? `name` is the resolved display label
+// (visualization.display_name override, else target_app.name). Renaming is
+// display-only — structural identity (path, registry, receipts) never moves.
+export interface ProjectIdentity {
+    name: string;
+    app_name: string;
+    display_name: string | null;
+    root_path: string | null;
 }
 
 export function usePlexus() {
-    const [data, setData] = useState<PlexusData>({ nodes: [], synapses: [], amygdala: [] });
+    const [data, setData] = useState<PlexusData>({ nodes: [], synapses: [], amygdala: [], resolutions: [] });
     const [loading, setLoading] = useState(true);
     const [selectedNode, setSelectedNode] = useState<any | null>(null);
     const [selectedSynapse, setSelectedSynapse] = useState<any | null>(null);
@@ -66,6 +77,7 @@ export function usePlexus() {
     const [showDormant, setShowDormant] = useState(false);
     const [simulationResult, setSimulationResult] = useState<any | null>(null);
     const [simulationTimestamp, setSimulationTimestamp] = useState<number | null>(null);
+    const [project, setProject] = useState<ProjectIdentity | null>(null);
 
     // Region filter (DESIGN_SPEC §5.7) — independent of showDormant to avoid
     // combinatorial filter bugs. Empty Set = all regions visible.
@@ -123,20 +135,29 @@ export function usePlexus() {
             // Don't flip the boot screen / unreachable card during background auto-retries.
             if (failCountRef.current === 0) setLoading(true);
             await ensureSessionToken();
-            const [nodes, synapses, amygdala] = await Promise.all([
+            const [nodes, synapses, amygdala, resolutions] = await Promise.all([
                 axios.get(`${API_BASE}/api/nodes`),
                 axios.get(`${API_BASE}/api/synapses`),
-                axios.get(`${API_BASE}/api/amygdala`)
+                axios.get(`${API_BASE}/api/amygdala`),
+                // non-fatal: an older engine without /api/resolutions just shows none
+                axios.get(`${API_BASE}/api/resolutions`).catch(() => ({ data: [] })),
             ]);
             setData({
                 nodes: Array.isArray(nodes.data) ? nodes.data : [],
                 synapses: Array.isArray(synapses.data) ? synapses.data : [],
-                amygdala: Array.isArray(amygdala.data) ? amygdala.data : []
+                amygdala: Array.isArray(amygdala.data) ? amygdala.data : [],
+                resolutions: Array.isArray(resolutions.data) ? resolutions.data : []
             });
             hasDataRef.current = true;
             failCountRef.current = 0;
             setError(null);
             setLinkLost(false);
+            // Identity chip is non-fatal: an older engine without /api/project
+            // must not trip the ENGINE LINK LOST banner — the chip just hides.
+            try {
+                const p = await axios.get(`${API_BASE}/api/project`);
+                if (p.data?.name) setProject(p.data);
+            } catch { /* chip hidden */ }
         } catch (e) {
             console.error("Failed to fetch Plexus data", e);
             handleFetchFailure(e);
@@ -166,6 +187,15 @@ export function usePlexus() {
                 scheduleRetry();
             }
         }
+    };
+
+    // Display-only rename (PUT is token-guarded; interceptor replays on 401).
+    // null / empty clears the override back to target_app.name.
+    const renameProject = async (displayName: string | null) => {
+        await ensureSessionToken();
+        const res = await axios.put(`${API_BASE}/api/project/display-name`, { display_name: displayName });
+        if (res.data?.name) setProject(res.data);
+        return res.data as ProjectIdentity;
     };
 
     // §5.7 — click toggles region visibility.
@@ -213,6 +243,8 @@ export function usePlexus() {
         setSelectedSynapse,
         runSimulation,
         refresh: fetchData,
+        project,
+        renameProject,
         // §5.7 region filter
         hiddenRegions,
         toggleRegion,

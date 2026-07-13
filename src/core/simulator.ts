@@ -1,5 +1,6 @@
 import { graph } from './graph';
-import { AmygdalaEntry, ImpactNode, SimulationResult } from '../types';
+import { AmygdalaEntry, ImpactNode, SimulationResult, ResolutionConflict } from '../types';
+import { findResolutionsTouchingNodes, flagRegressionRisk } from './resolutions';
 import { familyOf, reverseTraversesOnModify } from './families';
 import { getDb } from '../db/sqlite';
 import { v4 as uuidv4 } from 'uuid';
@@ -253,6 +254,21 @@ export class ImpactSimulator {
             recommendation += ` [${plannedImpact}] PLANNED node(s) in reach — check plan conformance (does this change fulfill or contradict the seeded design?).`;
         }
 
+        // ─── Regression gate: which resolved fixes does this change reach? ───
+        const affectedIds = [...new Set([...sourceNodeIds, ...blastArray.map((b) => b.node_id)])];
+        const touched = findResolutionsTouchingNodes(affectedIds, ['unconditional', 'conditional', 'partial', 'regression_risk']);
+        const resolution_conflicts: ResolutionConflict[] = touched.map((r) => ({
+            resolution_id: r.id,
+            issue: r.issue,
+            status: r.status,
+            confirmation: r.confirmation,
+            nodes: r.target_nodes.filter((n) => affectedIds.includes(n)),
+        }));
+        const cemented = resolution_conflicts.filter((c) => c.status === 'unconditional');
+        if (cemented.length > 0) {
+            recommendation += ` [${cemented.length}] CEMENTED FIX(ES) AT RISK: this change reaches ${cemented.map((c) => `"${c.issue}"`).join(', ')} — user-confirmed work. Find a path that preserves them, or plan to re-confirm.`;
+        }
+
         const result: SimulationResult = {
             id: uuidv4(),
             source_nodes: sourceNodeIds,
@@ -264,11 +280,15 @@ export class ImpactSimulator {
             risk_score: riskScore,
             recommendation,
             planned_impact: plannedImpact,
+            resolution_conflicts,
         };
 
         // dryRun (consultation briefs): pure computation — no history entry,
         // no simulation_history row, no impact-report file on disk.
         if (!opts.dryRun) {
+            // A REAL (recorded) impact sim that reaches a cemented fix demotes it to
+            // regression_risk — it now needs re-confirmation. dryRun what-ifs never mutate.
+            for (const c of cemented) flagRegressionRisk(c.resolution_id);
             this.history.push(result);
             this.persistResult(result);
             graph.saveSimulationReport(result);

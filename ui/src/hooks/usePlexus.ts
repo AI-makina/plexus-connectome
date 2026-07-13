@@ -177,6 +177,15 @@ export function usePlexus() {
         fetchData(); // clears any pending countdown itself
     };
 
+    // On-demand "search for updates" — re-reads the engine's build vs the on-disk build.
+    const checkForUpdates = async () => {
+        try {
+            const ev = await axios.get(`${API_BASE}/api/engine/version`);
+            setEngineVersion(ev.data);
+            return ev.data;
+        } catch { return null; }
+    };
+
     // Bring this connectome onto the latest build. The engine re-execs; the link
     // drops briefly, then the normal retry loop reconnects on the new code.
     const restartEngine = async () => {
@@ -246,6 +255,7 @@ export function usePlexus() {
         loading,
         engineVersion,
         restartEngine,
+        checkForUpdates,
         selectedNode,
         setSelectedNode,
         searchQuery,

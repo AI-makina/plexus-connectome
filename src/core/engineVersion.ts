@@ -9,6 +9,22 @@ import path from 'path';
 
 const BUILD_ID_FILE = path.join(__dirname, '..', 'BUILD_ID'); // dist/BUILD_ID (from dist/core)
 const SELF = __filename; // dist/core/engineVersion.js — rewritten every build (mtime fallback)
+const NOTES_FILE = path.join(__dirname, '..', '..', 'UPDATE_NOTES.json'); // repo root, developer-maintained
+
+export interface UpdateNote {
+    date: string;
+    title: string;
+    notes: string[];
+}
+
+// Newest entry from the release-notes file (read fresh so it reflects the on-disk build).
+function latestNote(): UpdateNote | null {
+    try {
+        const arr = JSON.parse(fs.readFileSync(NOTES_FILE, 'utf8'));
+        if (Array.isArray(arr) && arr.length > 0) return arr[0];
+    } catch { /* no notes file — fine */ }
+    return null;
+}
 
 function readBuildStamp(): number {
     try {
@@ -37,5 +53,6 @@ export function engineVersion() {
         on_disk_build_at: onDisk ? new Date(onDisk).toISOString() : null,
         update_available: onDisk > RUNNING_BUILD + 1000, // >1s newer = a rebuild happened
         uptime_seconds: Math.round(process.uptime()),
+        latest_update: latestNote(), // { date, title, notes[] } for the "what's new" panel
     };
 }

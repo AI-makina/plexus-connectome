@@ -1,0 +1,13 @@
+[
+  {
+    "date": "2026-07-12",
+    "title": "Resolution lifecycle + self-update",
+    "notes": [
+      "Issue resolution tracking: solved / conditional / partial / unsolved / regression-risk",
+      "Confirmation prompt — [Solved] [Partially] [Not solved] + comment",
+      "Regression gate — simulations flag changes that threaten confirmed fixes",
+      "Resolutions panel on the connectome (troubleshooting roadmap)",
+      "One-click engine self-update from the connectome page"
+    ]
+  }
+]

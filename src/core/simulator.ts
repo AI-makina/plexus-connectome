@@ -1,6 +1,7 @@
 import { graph } from './graph';
 import { AmygdalaEntry, ImpactNode, SimulationResult, ResolutionConflict } from '../types';
 import { findResolutionsTouchingNodes, flagRegressionRisk } from './resolutions';
+import { record as recordEff } from './effectiveness';
 import { familyOf, reverseTraversesOnModify } from './families';
 import { getDb } from '../db/sqlite';
 import { v4 as uuidv4 } from 'uuid';
@@ -288,7 +289,12 @@ export class ImpactSimulator {
         if (!opts.dryRun) {
             // A REAL (recorded) impact sim that reaches a cemented fix demotes it to
             // regression_risk — it now needs re-confirmation. dryRun what-ifs never mutate.
-            for (const c of cemented) flagRegressionRisk(c.resolution_id);
+            for (const c of cemented) {
+                flagRegressionRisk(c.resolution_id);
+                // Divergence dye: a change reached user-confirmed work — the "done" state
+                // proved provisional. Content-blind (no ids), a prediction-vs-reality signal.
+                recordEff('structure', 'divergence', { metric: 'confirmed_fix_rippled' });
+            }
             this.history.push(result);
             this.persistResult(result);
             graph.saveSimulationReport(result);

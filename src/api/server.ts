@@ -25,6 +25,7 @@ import {
 } from '../core/resolutions';
 import { ResolutionStatus, ConfirmationVerdict } from '../types';
 import { engineVersion } from '../core/engineVersion';
+import { record as recordEff, summary as effSummary } from '../core/effectiveness';
 import { spawn } from 'child_process';
 
 export const app = express();
@@ -391,6 +392,14 @@ app.get('/api/engine/version', (_req, res) => {
     res.json(engineVersion());
 });
 
+// ─── Effectiveness telemetry (content-blind "dye") ───────────────
+// Where Plexus is / isn't working — counters by category (ai / harness / structure /
+// value), claim-check hallucination + coverage-gap rates, per-model trend. No node
+// content ever leaves here; it's failure/usage TYPES + counts only.
+app.get('/api/effectiveness', (_req, res) => {
+    res.json(effSummary());
+});
+
 // Token-guarded (global authMiddleware). Re-execs this process on the current build:
 // migrations re-run (additive), new code + viz load. A boot delay in the child lets
 // this process release the port first (clean handoff); the viz auto-reconnects.
@@ -491,6 +500,14 @@ app.post('/api/claim-check', (req, res) => {
     }
     try {
         const results = checkClaims(identifiers);
+        // Effectiveness dye — content-blind: record only STATUS + count per identifier,
+        // never the identifier itself. missing = hallucination caught (value); out_of_scope
+        // = the graph is blind to this symbol category (structure gap); exists = verified.
+        const ccModel = typeof req.body?.model === 'string' ? req.body.model : '';
+        for (const r of results) {
+            const st = (r as any).status || 'unknown';
+            recordEff(st === 'out_of_scope' ? 'structure' : 'value', 'claim_check', { metric: st, model: ccModel });
+        }
         const matchedNodeIds = results.flatMap(r => r.matches.map(m => m.node_id));
         const matchedFiles = Array.from(new Set(results.flatMap(r => r.matches.map(m => m.file_path))));
         const consultationId = recordConsultation('claim_check', matchedNodeIds, matchedFiles);

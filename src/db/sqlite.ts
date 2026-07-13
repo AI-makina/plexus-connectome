@@ -155,11 +155,31 @@ export function initDb(integrationPath: string): Database.Database {
     );
   `);
 
+  // Effectiveness ledger — the content-blind "dye". Aggregated counters keyed by
+  // (category, event, metric, coarse bucket, self-reported model, day). NEVER stores
+  // node names, paths, or code — only failure/usage TYPES + counts. This is the raw
+  // material for the operational-improvement telemetry.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS effectiveness (
+      key TEXT PRIMARY KEY,
+      category TEXT NOT NULL,
+      event TEXT NOT NULL,
+      metric TEXT,
+      bucket TEXT,
+      model TEXT,
+      day TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
   // Indexes for performance
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_consultations_ts ON consultations(timestamp);
     CREATE INDEX IF NOT EXISTS idx_resolutions_status ON resolutions(status);
     CREATE INDEX IF NOT EXISTS idx_resolutions_confirmation ON resolutions(confirmation);
+    CREATE INDEX IF NOT EXISTS idx_effectiveness_cat ON effectiveness(category);
+    CREATE INDEX IF NOT EXISTS idx_effectiveness_day ON effectiveness(day);
     CREATE INDEX IF NOT EXISTS idx_nodes_region ON nodes(region);
     CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(type);
     CREATE INDEX IF NOT EXISTS idx_synapses_source ON synapses(source_node_id);

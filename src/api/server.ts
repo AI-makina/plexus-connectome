@@ -535,6 +535,7 @@ app.post('/api/consult', (req, res) => {
     }
     try {
         const brief = buildBrief({ node_ids, query, file_paths, mode }, simulator);
+        recordEff('ai', 'consult', { model: typeof req.body?.model === 'string' ? req.body.model : '' }); // AI is using the brain (usage)
         const consultationId = recordConsultation('consult', brief.consulted_node_ids, brief.consulted_file_paths);
         // The receipt covers what the brief resolved AND the file_paths the
         // caller declared it's about to touch — so consulting a file you're
@@ -646,6 +647,13 @@ app.post('/api/verify', (req, res) => {
         }
 
         const verdict = contradicted.length === 0 && unreconciled.length === 0 ? 'pass' : 'mismatch';
+        // Effectiveness (content-blind): the Step-6 truth check. contradicted = AI claimed
+        // a symbol it didn't actually leave in the graph (divergence); unreconciled = files
+        // the graph doesn't know yet (drift the harness has to absorb).
+        const vModel = typeof req.body?.model === 'string' ? req.body.model : '';
+        recordEff('harness', 'verify', { metric: verdict, model: vModel });
+        if (contradicted.length > 0) recordEff('structure', 'divergence', { metric: 'claimed_created_but_absent', model: vModel, count: contradicted.length });
+        if (unreconciled.length > 0) recordEff('harness', 'unreconciled_file', { model: vModel, count: unreconciled.length });
         recordConsultation('claim_check', [], [...reconciled, ...unreconciled]);
         res.json({
             verdict,
@@ -670,6 +678,10 @@ app.post('/api/simulate/impact', (req, res) => {
     }
     try {
         const result = simulator.simulate(node_ids, change_type || 'modify');
+        // Effectiveness (content-blind): the AI leaned on impact analysis; record the
+        // blast band only, model-tagged.
+        const band = result.risk_score > 0.7 ? 'critical' : result.risk_score > 0.4 ? 'high' : result.risk_score > 0.1 ? 'moderate' : 'low';
+        recordEff('ai', 'simulate', { metric: band, model: typeof req.body?.model === 'string' ? req.body.model : '' });
         const files = Array.from(new Set(
             node_ids.map((id: string) => graph.nodes.get(id)?.file_path).filter(Boolean)
         )) as string[];

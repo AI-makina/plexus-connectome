@@ -76,5 +76,41 @@ export function summary(): any {
     for (const r of rows) by_day[r.day] = (by_day[r.day] || 0) + r.count;
     const recent_days = Object.entries(by_day).sort().slice(-14).map(([day, count]) => ({ day, count }));
 
-    return { available: true, by_category, claim_check, divergences, by_model, recent_days };
+    // Structural-health snapshot — STATE (not events), read straight off the graph.
+    // planned_ratio = scanner couldn't activate (structure blind to that code); orphan_ratio
+    // = synapse inference too weak to connect it; content-blind (counts only).
+    let structure_health: any = { available: false };
+    try {
+        const db = getDb();
+        const total = (db.prepare("SELECT COUNT(*) c FROM nodes").get() as any).c || 0;
+        const planned = (db.prepare("SELECT COUNT(*) c FROM nodes WHERE status='planned'").get() as any).c || 0;
+        const dormant = (db.prepare("SELECT COUNT(*) c FROM nodes WHERE status='dormant'").get() as any).c || 0;
+        const active = (db.prepare("SELECT COUNT(*) c FROM nodes WHERE status='active'").get() as any).c || 0;
+        const orphan = (db.prepare(
+            `SELECT COUNT(*) c FROM nodes n WHERE n.status='active' AND NOT EXISTS
+             (SELECT 1 FROM synapses s WHERE (s.source_node_id=n.id OR s.target_node_id=n.id) AND s.status='active')`,
+        ).get() as any).c || 0;
+        structure_health = {
+            total_nodes: total,
+            planned_ratio: total ? +(planned / total).toFixed(3) : 0,
+            dormant_ratio: total ? +(dormant / total).toFixed(3) : 0,
+            orphan_ratio: active ? +(orphan / active).toFixed(3) : 0,
+        };
+    } catch { /* graph unreadable — leave unavailable */ }
+
+    // Effectiveness Score (0-100) — transparent penalty model, not a black box.
+    const totalSig = Object.values(by_category).reduce((a, b) => a + b, 0) || 1;
+    const divCount = Object.values(divergences).reduce((a, b) => a + b, 0);
+    const deductions = {
+        hallucination: +(claim_check.hallucination_rate * 15).toFixed(1),
+        coverage_gap: +(claim_check.coverage_gap_rate * 25).toFixed(1),
+        orphans: +((structure_health.orphan_ratio || 0) * 15).toFixed(1),
+        planned_stuck: +((structure_health.planned_ratio || 0) * 10).toFixed(1),
+        divergence: +Math.min(20, (divCount / totalSig) * 100 * 0.5).toFixed(1),
+    };
+    const effectiveness_score = Math.max(0, Math.min(100, Math.round(
+        100 - Object.values(deductions).reduce((a, b) => a + b, 0),
+    )));
+
+    return { available: true, effectiveness_score, deductions, by_category, claim_check, divergences, structure_health, by_model, recent_days };
 }

@@ -173,9 +173,34 @@ export function initDb(integrationPath: string): Database.Database {
     );
   `);
 
+  // AI feedback — the qualitative track. Model-tagged answers to the throttled,
+  // metric-seeded questionnaire. Content is about the TOOL, not customer code.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ai_feedback (
+      id TEXT PRIMARY KEY,
+      ts TEXT NOT NULL,
+      model TEXT,
+      theme TEXT,
+      question_id TEXT,
+      question TEXT,
+      answer TEXT,
+      seeded_by TEXT
+    );
+  `);
+
+  // Generic key/value (throttle state etc.)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS kv (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at TEXT
+    );
+  `);
+
   // Indexes for performance
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_consultations_ts ON consultations(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_ai_feedback_ts ON ai_feedback(ts);
     CREATE INDEX IF NOT EXISTS idx_resolutions_status ON resolutions(status);
     CREATE INDEX IF NOT EXISTS idx_resolutions_confirmation ON resolutions(confirmation);
     CREATE INDEX IF NOT EXISTS idx_effectiveness_cat ON effectiveness(category);

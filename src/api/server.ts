@@ -26,6 +26,7 @@ import {
 import { ResolutionStatus, ConfirmationVerdict } from '../types';
 import { engineVersion } from '../core/engineVersion';
 import { record as recordEff, summary as effSummary } from '../core/effectiveness';
+import { nextBatch as feedbackBatch, recordAnswer as recordFeedback, summary as feedbackSummary, recentAnswers as feedbackRecent } from '../core/feedback';
 import { spawn } from 'child_process';
 
 export const app = express();
@@ -398,6 +399,26 @@ app.get('/api/engine/version', (_req, res) => {
 // content ever leaves here; it's failure/usage TYPES + counts only.
 app.get('/api/effectiveness', (_req, res) => {
     res.json(effSummary());
+});
+
+// ─── AI questionnaire (qualitative track) ────────────────────────
+// The caller (MCP/app) asks at a session boundary; the engine returns a batch only
+// if the ~weekly throttle has elapsed, seeded by this session's metrics.
+app.get('/api/feedback/questions', (_req, res) => {
+    res.json(feedbackBatch());
+});
+
+// { model, answers: [{ question_id?, question?, theme?, seeded_by?, answer }] }
+app.post('/api/feedback', (req, res) => {
+    const { model, answers } = req.body || {};
+    if (!Array.isArray(answers) || answers.length === 0) return res.status(400).json({ error: 'answers[] required' });
+    let stored = 0;
+    for (const a of answers.slice(0, 10)) { if (a?.answer) { recordFeedback(String(model || ''), a); stored++; } }
+    res.json({ stored });
+});
+
+app.get('/api/feedback', (_req, res) => {
+    res.json({ ...feedbackSummary(), recent: feedbackRecent(20) });
 });
 
 // Token-guarded (global authMiddleware). Re-execs this process on the current build:

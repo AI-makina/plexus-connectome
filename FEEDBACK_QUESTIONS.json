@@ -1,0 +1,30 @@
+{
+  "note": "AI-facing feedback bank. Biased to DESCRIPTIVE (what happened / where it got in your way) over PRESCRIPTIVE (what to build). Grouped by theme so a batch can target what this session's metrics flagged. Grow toward ~100; keep each answerable in 5-10 sentences.",
+  "themes": {
+    "claim_check": [
+      { "id": "cc1", "q": "When you claim-checked identifiers this session, did anything come back 'missing' or 'out_of_scope' that you actually expected the graph to know? Describe the case." },
+      { "id": "cc2", "q": "Did you ever proceed to write code referencing something claim-check flagged? If so, what made you override it?" },
+      { "id": "cc3", "q": "Were there symbols you relied on that you didn't think to claim-check? What kind?" }
+    ],
+    "harness": [
+      { "id": "hn1", "q": "Did the enforcement/harness ever block an edit you believed was legitimate? Describe what you were doing." },
+      { "id": "hn2", "q": "Did you ever work around Plexus (bypass, edit without consulting) this session? What pushed you to?" },
+      { "id": "hn3", "q": "Was the consult-before-edit requirement ever unclear or in your way at a specific moment?" }
+    ],
+    "brief": [
+      { "id": "br1", "q": "Did the consultation brief give you what you needed before a change, or did you still have to go read files yourself? Which parts were missing?" },
+      { "id": "br2", "q": "Was anything in the brief misleading or stale relative to the actual code you then saw?" },
+      { "id": "br3", "q": "Was the brief the right length — too sparse to trust, or too long to be worth reading?" }
+    ],
+    "structure": [
+      { "id": "st1", "q": "Did the connectome seem to be missing nodes or relationships for the part of the codebase you worked on? What kind of thing was absent?" },
+      { "id": "st2", "q": "Did a simulation's predicted impact match what actually happened when you made the change? Where did it diverge?" },
+      { "id": "st3", "q": "Were any nodes classified into a region/type that felt wrong for what the code actually does?" }
+    ],
+    "general": [
+      { "id": "gn1", "q": "At which single moment this session did Plexus help you most concretely?" },
+      { "id": "gn2", "q": "At which single moment did it slow you down or add friction with no payoff?" },
+      { "id": "gn3", "q": "If one thing about how Plexus works were different, which friction from THIS session would it have removed?" }
+    ]
+  }
+}

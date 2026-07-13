@@ -22,6 +22,13 @@ export const MANAGER_HTML = `<!doctype html>
   .cust { margin-bottom:26px; }
   .cust-head { display:flex; align-items:baseline; gap:8px; margin-bottom:10px; }
   .cust-head .name { font-size:15px; font-weight:600; }
+  .cust-name-edit { font-size:15px; font-weight:600; background:transparent; border:1px solid transparent;
+    border-radius:5px; color:var(--hi); padding:2px 7px; outline:none; font-family:inherit; min-width:120px; }
+  .cust-name-edit:hover { border-color:var(--line); }
+  .cust-name-edit:focus { border-color:var(--azure); background:var(--ink2); }
+  .bulk { padding:10px 28px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px; font-size:12px; color:var(--mid); }
+  .bulk input { background:var(--ink2); border:1px solid var(--line); border-radius:6px; color:var(--hi); font-size:12px; padding:5px 10px; width:180px; outline:none; }
+  .bulk button { background:var(--azure); border:none; border-radius:6px; color:#08090B; font-size:11px; font-weight:600; padding:6px 12px; cursor:pointer; }
   .cust-head .count { font:500 10px var(--mono); color:var(--lo); text-transform:uppercase; letter-spacing:.1em; }
   .cust.unassigned .cust-head .name { color:var(--lo); }
   .card { background:var(--ink1); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:8px; }
@@ -50,6 +57,7 @@ export const MANAGER_HTML = `<!doctype html>
   <span class="tag">vendor control-plane · local</span>
   <span class="right"><a class="back" href="/">← launcher</a> &nbsp; auto-refresh 12s</span>
 </header>
+<div class="bulk">Put all connectomes under: <input id="bulk-name" placeholder="your name"><button onclick="assignAll()">Apply to all</button></div>
 <div class="wrap" id="wrap"><div class="muted">Loading connectomes…</div></div>
 <script>
 function scoreColor(s){ if(s==null) return 'var(--ghost)'; if(s>=75) return 'var(--green)'; if(s>=50) return 'var(--amber)'; return 'var(--red)'; }
@@ -88,6 +96,20 @@ function assign(inp){
     .then(function(){ load(); });
 }
 
+function renameOwner(inp){
+  var from = inp.getAttribute('data-from'); var to = inp.value.trim();
+  if(!to || to===from){ load(); return; }
+  fetch('/api/launcher/rename-owner', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({from:from, to:to})})
+    .then(function(){ load(); });
+}
+
+function assignAll(){
+  var owner = (document.getElementById('bulk-name').value||'').trim();
+  if(!owner) return;
+  fetch('/api/launcher/assign-all', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({owner:owner})})
+    .then(function(){ document.getElementById('bulk-name').value=''; load(); });
+}
+
 function load(){
   fetch('/api/launcher/manager').then(function(r){return r.json();}).then(function(d){
     var cust = d.customers || {};
@@ -97,7 +119,7 @@ function load(){
     owners.forEach(function(owner){
       var list = cust[owner];
       html += '<div class="cust'+(owner==='Unassigned'?' unassigned':'')+'">'
-        + '<div class="cust-head"><span class="name">'+esc(owner)+'</span>'
+        + '<div class="cust-head"><input class="cust-name-edit" value="'+esc(owner)+'" data-from="'+esc(owner)+'" onchange="renameOwner(this)" title="rename this customer (moves all their connectomes)">'
         + '<span class="count">'+list.length+' connectome'+(list.length>1?'s':'')+'</span></div>'
         + list.map(renderConnectome).join('') + '</div>';
     });

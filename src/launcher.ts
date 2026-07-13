@@ -160,6 +160,33 @@ export function startLauncher(open = true) {
         res.json({ ok: true, owner: proj.owner || null });
     });
 
+    // Rename a customer — moves ALL their connectomes to the new name. `from` = 'Unassigned'
+    // targets connectomes with no owner (the sweep-everything-under-my-name path). If `to`
+    // already exists, the groups merge.
+    app.post('/api/launcher/rename-owner', (req, res) => {
+        const { from, to } = req.body || {};
+        const target = (typeof to === 'string') ? to.trim() : '';
+        if (!target) return res.status(400).json({ error: 'a non-empty new name is required' });
+        const reg = loadRegistry();
+        let moved = 0;
+        for (const p of reg.projects) {
+            const cur = (p.owner && p.owner.trim()) || 'Unassigned';
+            if (cur === from) { p.owner = target; moved++; }
+        }
+        saveRegistry(reg);
+        res.json({ ok: true, moved, to: target });
+    });
+
+    // Sweep EVERY connectome under one owner (e.g. "put all under my name").
+    app.post('/api/launcher/assign-all', (req, res) => {
+        const owner = (typeof req.body?.owner === 'string') ? req.body.owner.trim() : '';
+        if (!owner) return res.status(400).json({ error: 'a non-empty name is required' });
+        const reg = loadRegistry();
+        for (const p of reg.projects) p.owner = owner;
+        saveRegistry(reg);
+        res.json({ ok: true, count: reg.projects.length, owner });
+    });
+
     // Minimal directory browser for "connect existing"
     app.get('/api/launcher/fs', (req, res) => {
         const target = path.resolve(String(req.query.path || os.homedir()));

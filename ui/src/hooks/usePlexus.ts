@@ -195,6 +195,21 @@ export function usePlexus() {
         setTimeout(() => fetchData(), 2500); // give the child time to bind, then reconnect
     };
 
+    // Accept a vendor-queued update: records 'updated' then re-execs onto the new build.
+    const acceptUpdate = async () => {
+        await ensureSessionToken();
+        try { await axios.post(`${API_BASE}/api/engine/accept-update`, {}); } catch { /* engine exits mid-response */ }
+        setLinkLost(true);
+        setTimeout(() => fetchData(), 2500);
+    };
+
+    // "Later": records 'pushed'; nothing restarts, the offer stays on file for next time.
+    const deferUpdate = async () => {
+        await ensureSessionToken();
+        try { await axios.post(`${API_BASE}/api/engine/defer-update`, {}); } catch { /* */ }
+        await checkForUpdates();
+    };
+
     const runSimulation = async (nodeId: string) => {
         try {
             await ensureSessionToken();
@@ -255,6 +270,8 @@ export function usePlexus() {
         loading,
         engineVersion,
         restartEngine,
+        acceptUpdate,
+        deferUpdate,
         checkForUpdates,
         selectedNode,
         setSelectedNode,

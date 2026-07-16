@@ -27,7 +27,23 @@ import { ResolutionStatus, ConfirmationVerdict } from '../types';
 import { engineVersion } from '../core/engineVersion';
 import { record as recordEff, summary as effSummary } from '../core/effectiveness';
 import { nextBatch as feedbackBatch, recordAnswer as recordFeedback, summary as feedbackSummary, recentAnswers as feedbackRecent } from '../core/feedback';
+import { readPending, acceptPending, deferPending } from '../core/pendingUpdate';
 import { spawn } from 'child_process';
+
+// Re-exec this process onto the current build (shared by /restart and /accept-update).
+function reexecEngine(res: any, extra: any = {}) {
+    res.json({ restarting: true, ...engineVersion(), ...extra, note: 'Engine re-executing on the current build — reconnect shortly.' });
+    setTimeout(() => {
+        try {
+            const child = spawn(process.execPath, process.argv.slice(1), {
+                detached: true, stdio: 'ignore', cwd: process.cwd(),
+                env: { ...process.env, PLEXUS_BOOT_DELAY_MS: '1200', PLEXUS_NO_OPEN: '1' },
+            });
+            child.unref();
+        } catch { /* no restart */ }
+        process.exit(0);
+    }, 400);
+}
 
 export const app = express();
 
@@ -390,7 +406,7 @@ app.post('/api/resolutions/:id/link', (req, res) => {
 // restart. Rebuild the shared dist once; each viz sees update_available and can apply.
 
 app.get('/api/engine/version', (_req, res) => {
-    res.json(engineVersion());
+    res.json({ ...engineVersion(), pending: readPending() });
 });
 
 // ─── Effectiveness telemetry (content-blind "dye") ───────────────
@@ -425,20 +441,20 @@ app.get('/api/feedback', (_req, res) => {
 // migrations re-run (additive), new code + viz load. A boot delay in the child lets
 // this process release the port first (clean handoff); the viz auto-reconnects.
 app.post('/api/engine/restart', (_req, res) => {
-    const v = engineVersion();
-    res.json({ restarting: true, ...v, note: 'Engine re-executing on the current build — reconnect shortly.' });
-    setTimeout(() => {
-        try {
-            const child = spawn(process.execPath, process.argv.slice(1), {
-                detached: true,
-                stdio: 'ignore',
-                cwd: process.cwd(),
-                env: { ...process.env, PLEXUS_BOOT_DELAY_MS: '1200', PLEXUS_NO_OPEN: '1' },
-            });
-            child.unref();
-        } catch { /* spawn failed → no restart, process keeps running */ }
-        process.exit(0);
-    }, 400);
+    reexecEngine(res);
+});
+
+// Consent-based update queue. The client (in their connectome) decides:
+//   accept → record 'updated' then re-exec onto the new build.
+//   defer  → record 'pushed' ("later"); the offer stays on file, nothing changes.
+app.post('/api/engine/accept-update', (_req, res) => {
+    const p = acceptPending();
+    reexecEngine(res, { accepted: true, pending: p });
+});
+
+app.post('/api/engine/defer-update', (_req, res) => {
+    const p = deferPending();
+    res.json({ ok: true, pending: p });
 });
 
 // ─── Feedback System ─────────────────────────────────────────────

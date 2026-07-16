@@ -79,6 +79,19 @@ function readDisplayName(projectPath: string): string | null {
     } catch { return null; }
 }
 
+// The vendor's current build/version (what "Send update" queues) — read from dist.
+function vendorBuild(): { build: number; version: string } {
+    let build = 0, version = '?';
+    try { build = parseInt(fs.readFileSync(path.join(__dirname, 'BUILD_ID'), 'utf8').trim(), 10) || 0; } catch { /* no stamp */ }
+    try { version = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).version || '?'; } catch { /* */ }
+    return { build, version };
+}
+
+// The pending-update marker a connectome carries (read from its folder; works stopped too).
+function readConnectomePending(projectPath: string): any | null {
+    try { return JSON.parse(fs.readFileSync(path.join(projectPath, 'plexus-integration', 'pending-update.json'), 'utf8')); } catch { return null; }
+}
+
 // ─── Server ───────────────────────────────────────────────────────────────────
 
 export function startLauncher(open = true) {
@@ -161,9 +174,10 @@ export function startLauncher(open = true) {
                 api_port: p.api_port,
                 running,
                 live,
+                pending: readConnectomePending(p.path), // { status, target_build, … } or null
             });
         }
-        res.json({ customers });
+        res.json({ customers, latest: vendorBuild() });
     });
 
     // Assign a connectome to a customer.
@@ -194,16 +208,25 @@ export function startLauncher(open = true) {
         res.json({ ok: true, moved, to: target });
     });
 
-    // Send the update to a connectome — triggers its engine self-update (token-authenticated).
-    // Only works if the engine is running; the client's viz reconnects on the new build.
-    app.post('/api/launcher/update', async (req, res) => {
+    // Send the update to a connectome — QUEUES it (writes a pending marker into the
+    // connectome), whether the engine is running or stopped. Never force-applies and never
+    // remotely starts a client's engine: the client sees the offer when they open/start
+    // their connectome and chooses accept (→updated) or later (→pushed).
+    app.post('/api/launcher/update', (req, res) => {
         const { path: projectPath } = req.body || {};
         const reg = loadRegistry();
         const proj = reg.projects.find(p => p.path === projectPath);
         if (!proj) return res.status(404).json({ error: 'connectome not registered' });
-        if (!(await probe(proj.api_port))) return res.status(409).json({ error: 'engine not running — start it first' });
-        const ok = await postEngine(proj.path, proj.api_port, '/api/engine/restart');
-        res.json({ ok, name: proj.name });
+        const meta = vendorBuild();
+        const pending = { status: 'sent', target_build: meta.build, target_version: meta.version, sent_at: new Date().toISOString() };
+        try {
+            const dir = path.join(proj.path, 'plexus-integration');
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(path.join(dir, 'pending-update.json'), JSON.stringify(pending, null, 2));
+            res.json({ ok: true, name: proj.name, pending });
+        } catch (e: any) {
+            res.status(500).json({ error: e.message });
+        }
     });
 
     // Minimal directory browser for "connect existing"

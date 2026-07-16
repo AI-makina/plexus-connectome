@@ -43,6 +43,9 @@ export const MANAGER_HTML = `<!doctype html>
   .start-btn { color:var(--hi); background:var(--ink2); border:1px solid var(--line); font:600 10px var(--mono); border-radius:4px; padding:3px 9px; cursor:pointer; }
   .start-btn:disabled { opacity:.55; cursor:default; }
   .uptodate { color:var(--lo); font:10px var(--mono); }
+  .st-sent { color:var(--amber); font:600 10px var(--mono); }
+  .st-pushed { color:var(--lo); font:600 10px var(--mono); }
+  .st-updated { color:var(--green); font:600 10px var(--mono); }
   .row2 { display:flex; align-items:center; gap:18px; margin-top:11px; }
   .score { display:flex; align-items:center; gap:8px; }
   .score .num { font:600 18px var(--mono); }
@@ -62,7 +65,7 @@ export const MANAGER_HTML = `<!doctype html>
   <span class="tag">vendor control-plane · local</span>
   <span class="right"><a class="back" href="/">← launcher</a> &nbsp; auto-refresh 12s</span>
 </header>
-<div class="bulk" style="justify-content:flex-end"><button onclick="updateAll()">Update all outdated</button></div>
+<div class="bulk"><div style="margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:2px"><button onclick="updateAll()">Send update to all outdated</button><span style="font-size:10px;color:var(--lo)">pushing&nbsp;v<span id="latest-ver">…</span></span></div></div>
 <div class="wrap" id="wrap"><div class="muted">Loading connectomes…</div></div>
 <script>
 function scoreColor(s){ if(s==null) return 'var(--ghost)'; if(s>=75) return 'var(--green)'; if(s>=50) return 'var(--amber)'; return 'var(--red)'; }
@@ -82,15 +85,10 @@ function renderConnectome(c){
       + '<span class="stat">divergences <b>'+(live.divergences||0)+'</b></span>'
       + (live.planned_ratio!=null ? '<span class="stat">planned <b>'+Math.round(live.planned_ratio*100)+'%</b></span>' : '')
     : '';
-  var ver;
-  if (c.running) {
-    var action = live.update_available
-      ? '<button class="upd-btn" data-path="'+esc(c.path)+'" onclick="sendUpdate(this)">Send update</button>'
-      : '<span class="uptodate">✓ up to date</span>';
-    ver = '<span class="ver">v'+esc(live.version||'?')+' '+action+'</span>';
-  } else {
-    ver = '<span class="ver muted">stopped</span> <button class="start-btn" data-path="'+esc(c.path)+'" onclick="startEngine(this)">Start</button>';
-  }
+  var action = updateAction(c);
+  var ver = c.running
+    ? '<span class="ver">v'+esc(live.version||'?')+' '+action+'</span>'
+    : '<span class="ver muted">stopped</span> '+action;
   return '<div class="card">'
     + '<div class="row1"><span class="dot" style="background:'+dotCol+'"></span>'
     + '<span class="cname">'+esc(c.display_name)+'</span> <span class="fname">'+esc(c.name)+'</span>'
@@ -115,29 +113,49 @@ function renameOwner(inp){
 }
 
 function sendUpdate(btn){
-  btn.disabled=true; btn.textContent='sending…';
+  btn.disabled=true; btn.textContent='queuing…';
   fetch('/api/launcher/update', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({path:btn.getAttribute('data-path')})})
-    .then(function(r){return r.json();}).then(function(){ setTimeout(load, 3500); });
+    .then(function(r){return r.json();}).then(function(){ load(); });
 }
 
-function startEngine(btn){
-  btn.disabled=true; btn.textContent='starting…';
-  fetch('/api/launcher/serve', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({path:btn.getAttribute('data-path')})})
-    .then(function(){ setTimeout(load, 3500); });
+var LATEST = { build: 0, version: '?' };
+
+// The per-card action, consent-aware. A pending marker FOR THE CURRENT build shows its
+// status (Sent/Pushed/Updated); otherwise a connectome that's behind (or stopped) can be
+// sent an update, and one that's current is "up to date". No "Start" — the vendor never
+// remotely turns on a client's engine.
+function updateAction(c){
+  var live = c.live || {};
+  var pend = c.pending;
+  var forCurrent = pend && pend.target_build === LATEST.build;
+  if (forCurrent){
+    if (pend.status === 'updated') return '<span class="st-updated">✓ Updated</span>';
+    if (pend.status === 'pushed')  return '<span class="st-pushed">Pushed</span> <button class="upd-btn" data-path="'+esc(c.path)+'" onclick="sendUpdate(this)">Re-send</button>';
+    return '<span class="st-sent">Sent · awaiting client</span>';
+  }
+  if (c.running && !live.update_available) return '<span class="uptodate">✓ up to date</span>';
+  return '<button class="upd-btn" data-path="'+esc(c.path)+'" onclick="sendUpdate(this)">Send update</button>';
 }
 
 function updateAll(){
   fetch('/api/launcher/manager').then(function(r){return r.json();}).then(function(d){
-    var paths=[];
-    Object.keys(d.customers||{}).forEach(function(o){ (d.customers[o]||[]).forEach(function(c){ if(c.running && (c.live||{}).update_available) paths.push(c.path); }); });
+    var latest = d.latest || {}; var paths=[];
+    Object.keys(d.customers||{}).forEach(function(o){ (d.customers[o]||[]).forEach(function(c){
+      var pend=c.pending, live=c.live||{};
+      var forCurrent = pend && pend.target_build === latest.build;
+      var needs = !forCurrent && !(c.running && !live.update_available); // not up-to-date, no current pending
+      if (needs) paths.push(c.path);
+    }); });
     if(!paths.length) return;
     Promise.all(paths.map(function(p){ return fetch('/api/launcher/update',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({path:p})}); }))
-      .then(function(){ setTimeout(load, 3500); });
+      .then(function(){ load(); });
   });
 }
 
 function load(){
   fetch('/api/launcher/manager').then(function(r){return r.json();}).then(function(d){
+    LATEST = d.latest || LATEST;
+    var lv = document.getElementById('latest-ver'); if(lv) lv.textContent = LATEST.version || '?';
     var cust = d.customers || {};
     var owners = Object.keys(cust).sort(function(a,b){ if(a==='Unassigned')return 1; if(b==='Unassigned')return -1; return a.localeCompare(b); });
     if(owners.length===0){ document.getElementById('wrap').innerHTML='<div class="muted">No connectomes registered yet.</div>'; return; }

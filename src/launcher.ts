@@ -149,22 +149,65 @@ export function startLauncher(open = true) {
     app.get('/api/launcher/manager', async (_req, res) => {
         const reg = loadRegistry();
         const customers: Record<string, any[]> = {};
+        // Fleet-wide accumulators — the vendor rollup across every connectome that's up.
+        const agg = {
+            connectomes: 0, running: 0, scoreSum: 0, scoreN: 0,
+            checks: 0, hallucinations_caught: 0, coverage_gaps: 0, divergences: 0,
+            by_category: {} as Record<string, number>,
+            by_model: {} as Record<string, { events: number; claim_missing: number; claim_out_of_scope: number }>,
+            feedback_total: 0, by_theme: {} as Record<string, number>,
+            recent_feedback: [] as any[],
+        };
         for (const p of reg.projects) {
+            agg.connectomes++;
             const running = await probe(p.api_port);
             let live: any = null;
             if (running) {
-                const [ver, eff] = await Promise.all([
+                agg.running++;
+                // Pull BOTH tracks: the quantitative dye (effectiveness) AND the qualitative
+                // questionnaire (feedback). This is the client→vendor half of the loop.
+                const [ver, eff, fb] = await Promise.all([
                     fetchJson(p.api_port, '/api/engine/version'),
                     fetchJson(p.api_port, '/api/effectiveness'),
+                    fetchJson(p.api_port, '/api/feedback'),
                 ]);
+                const cc = eff?.claim_check || {};
+                const divTotal = eff?.divergences ? Object.values(eff.divergences).reduce((a: number, b: any) => a + b, 0) : 0;
                 live = {
                     version: ver?.version ?? null,
                     update_available: ver?.update_available ?? false,
                     score: eff?.effectiveness_score ?? null,
-                    hallucinations_caught: eff?.claim_check?.missing ?? 0,
-                    divergences: eff?.divergences ? Object.values(eff.divergences).reduce((a: number, b: any) => a + b, 0) : 0,
+                    hallucinations_caught: cc.missing ?? 0,
+                    coverage_gaps: cc.out_of_scope ?? 0,
+                    checks: cc.checked ?? 0,
+                    hallucination_rate: cc.hallucination_rate ?? 0,
+                    coverage_gap_rate: cc.coverage_gap_rate ?? 0,
+                    divergences: divTotal,
                     planned_ratio: eff?.structure_health?.planned_ratio ?? null,
+                    orphan_ratio: eff?.structure_health?.orphan_ratio ?? null,
+                    deductions: eff?.deductions ?? null,       // what's pulling the score down
+                    by_category: eff?.by_category ?? null,     // ai / harness / structure / value
+                    by_model: eff?.by_model ?? null,           // per-model hallucination trend
+                    recent_days: eff?.recent_days ?? null,     // 14-day activity
+                    feedback: fb ? { total: fb.total ?? 0, by_theme: fb.by_theme ?? {}, recent: (fb.recent || []).slice(0, 5) } : null,
                 };
+                // Fold this connectome into the fleet aggregate.
+                if (typeof live.score === 'number') { agg.scoreSum += live.score; agg.scoreN++; }
+                agg.checks += live.checks || 0;
+                agg.hallucinations_caught += live.hallucinations_caught || 0;
+                agg.coverage_gaps += live.coverage_gaps || 0;
+                agg.divergences += live.divergences || 0;
+                for (const k of Object.keys(eff?.by_category || {})) agg.by_category[k] = (agg.by_category[k] || 0) + (eff.by_category[k] || 0);
+                for (const m of Object.keys(eff?.by_model || {})) {
+                    const src = eff.by_model[m] || {};
+                    const a = agg.by_model[m] = agg.by_model[m] || { events: 0, claim_missing: 0, claim_out_of_scope: 0 };
+                    a.events += src.events || 0; a.claim_missing += src.claim_missing || 0; a.claim_out_of_scope += src.claim_out_of_scope || 0;
+                }
+                if (fb) {
+                    agg.feedback_total += fb.total || 0;
+                    for (const t of Object.keys(fb.by_theme || {})) agg.by_theme[t] = (agg.by_theme[t] || 0) + (fb.by_theme[t] || 0);
+                    for (const r of (fb.recent || [])) agg.recent_feedback.push({ ...r, connectome: readDisplayName(p.path) || p.name });
+                }
             }
             const owner = (p.owner && p.owner.trim()) || 'Unassigned';
             (customers[owner] = customers[owner] || []).push({
@@ -177,7 +220,17 @@ export function startLauncher(open = true) {
                 pending: readConnectomePending(p.path), // { status, target_build, … } or null
             });
         }
-        res.json({ customers, latest: vendorBuild() });
+        agg.recent_feedback.sort((a: any, b: any) => (a.ts < b.ts ? 1 : -1));
+        const aggregate = {
+            connectomes: agg.connectomes, running: agg.running,
+            avg_score: agg.scoreN ? Math.round(agg.scoreSum / agg.scoreN) : null,
+            checks: agg.checks, hallucinations_caught: agg.hallucinations_caught,
+            coverage_gaps: agg.coverage_gaps, divergences: agg.divergences,
+            by_category: agg.by_category, by_model: agg.by_model,
+            feedback_total: agg.feedback_total, by_theme: agg.by_theme,
+            recent_feedback: agg.recent_feedback.slice(0, 8),
+        };
+        res.json({ customers, latest: vendorBuild(), aggregate });
     });
 
     // Assign a connectome to a customer.

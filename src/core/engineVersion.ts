@@ -38,15 +38,23 @@ function readBuildStamp(): number {
 // Captured once, at startup — the build THIS process is running.
 const RUNNING_BUILD = readBuildStamp();
 
-let pkgVersion = '?';
-try {
-    pkgVersion = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8')).version || '?';
-} catch { /* best-effort */ }
+// package.json version. Read fresh each call: `npm run build` bumps the patch, so a
+// fresh read after a rebuild is the on-disk (target) version, while the value captured
+// at startup is the installed (running) version.
+function readPkgVersion(): string {
+    try {
+        return JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8')).version || '?';
+    } catch { return '?'; }
+}
+
+// Installed/running version — captured at startup, never changes for this process.
+const pkgVersion = readPkgVersion();
 
 export function engineVersion() {
     const onDisk = readBuildStamp();
     return {
-        version: pkgVersion,
+        version: pkgVersion, // installed / running (captured at startup)
+        latest_version: readPkgVersion(), // on-disk / target (fresh read — the version an update would install)
         running_build: RUNNING_BUILD,
         on_disk_build: onDisk,
         running_build_at: RUNNING_BUILD ? new Date(RUNNING_BUILD).toISOString() : null,

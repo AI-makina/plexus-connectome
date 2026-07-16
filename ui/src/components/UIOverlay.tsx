@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { REGIONS, REGION_COLORS } from '../theme/regions';
 import { LogoMark } from './Brand';
 import SearchDropdown from './SearchDropdown';
+import EngineUpdateBadge from './EngineUpdateBadge';
 import { Button, Tag, RISK_HEX, useCountUp, usePresence, prefersReducedMotion } from './primitives';
 import { middleTruncate } from '../lib/format';
 import { API_BASE } from '../hooks/usePlexus';
@@ -876,7 +877,7 @@ export default function UIOverlay({ plexus }: any) {
                     )}
                 </div>
 
-                {/* Top-right island group: dormant toggle + stat cluster */}
+                {/* Top-right island group: dormant toggle + stat cluster + menu */}
                 <div className="pointer-events-auto flex items-start gap-3">
                     <DormantToggle
                         on={plexus.showDormant}
@@ -884,6 +885,7 @@ export default function UIOverlay({ plexus }: any) {
                         onToggle={() => plexus.setShowDormant(!plexus.showDormant)}
                     />
                     <StatCluster data={plexus.data} />
+                    <EngineUpdateBadge plexus={plexus} />
                 </div>
             </div>
 

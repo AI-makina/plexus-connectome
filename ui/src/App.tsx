@@ -3,7 +3,6 @@ import { usePlexus } from './hooks/usePlexus';
 import NetworkGraph from './components/NetworkGraph';
 import UIOverlay from './components/UIOverlay';
 import ResolutionsPanel from './components/ResolutionsPanel';
-import EngineUpdateBadge from './components/EngineUpdateBadge';
 import ErrorBoundary from './ErrorBoundary';
 import { LogoMark } from './components/Brand';
 
@@ -57,7 +56,6 @@ function App() {
         <div className="absolute inset-0 z-10 pointer-events-none">
           <UIOverlay plexus={plexus} />
           <ResolutionsPanel plexus={plexus} />
-          <EngineUpdateBadge plexus={plexus} />
         </div>
       </div>
     </ErrorBoundary>

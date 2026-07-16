@@ -44,12 +44,12 @@ export default function EngineUpdateBadge({ plexus }: { plexus: any }) {
 
     return (
         <>
-            {/* ── Hamburger menu — furthest top-right corner ── */}
-            <div className="pointer-events-auto absolute right-3 top-3 z-30 flex flex-col items-end gap-2">
+            {/* ── Hamburger menu — sits inline in the top-right bar group (no overlap) ── */}
+            <div className="pointer-events-auto relative">
                 <button
                     onClick={toggleMenu}
                     aria-label="Menu"
-                    className="relative flex h-8 w-8 items-center justify-center rounded-lg border transition-colors duration-120"
+                    className="relative flex h-9 w-9 items-center justify-center rounded-lg border transition-colors duration-120"
                     style={{ ...panel, borderColor: 'var(--line1, rgba(255,255,255,0.10))' }}
                 >
                     <svg width="15" height="12" viewBox="0 0 15 12" fill="none">
@@ -61,7 +61,7 @@ export default function EngineUpdateBadge({ plexus }: { plexus: any }) {
                 </button>
 
                 {menuOpen && (
-                    <div className="w-[300px] rounded-lg border border-line p-3.5" style={panel}>
+                    <div className="absolute right-0 top-full z-40 mt-2 w-[300px] rounded-lg border border-line p-3.5" style={panel}>
                         <div className="micro-label mb-2" style={{ letterSpacing: '0.14em' }}>Updates</div>
                         {checking ? (
                             <div className="text-[11px] text-text-lo">Checking for updates…</div>

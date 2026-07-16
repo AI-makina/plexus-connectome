@@ -1,6 +1,6 @@
 {
   "name": "plexus",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Plexus Neural Connectome Engine",
   "main": "dist/index.js",
   "bin": {
@@ -10,7 +10,7 @@
     "start": "ts-node src/index.ts",
     "dev": "nodemon src/index.ts",
     "build": "tsc && npm run stamp",
-    "stamp": "node -e \"require('fs').writeFileSync('dist/BUILD_ID', Date.now().toString())\""
+    "stamp": "node scripts/stamp.js"
   },
   "keywords": [],
   "author": "",

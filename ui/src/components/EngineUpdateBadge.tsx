@@ -39,6 +39,7 @@ export default function EngineUpdateBadge({ plexus }: { plexus: any }) {
         setMenuOpen(next);
         if (next && !checking) { setChecking(true); await plexus.checkForUpdates?.(); setChecking(false); }
     };
+    const scan = async () => { setChecking(true); try { await plexus.checkForUpdates?.(); } finally { setChecking(false); } };
 
     const panel: React.CSSProperties = { background: 'rgba(14,15,17,0.96)', backdropFilter: 'blur(8px)' };
 
@@ -76,8 +77,8 @@ export default function EngineUpdateBadge({ plexus }: { plexus: any }) {
                                             className="flex h-4 w-4 items-center justify-center rounded-full border border-line text-[9px] text-text-lo transition-colors hover:text-text-hi">?</button>
                                     ) : null}
                                 </div>
-                                <div className="readout mt-1 text-[10px] text-text-lo">
-                                    {latest?.title ? `${latest.title} · ` : 'Most recent build · '}{dateStr}
+                                <div className="readout mt-1 text-[10px] text-text-mid">
+                                    Installed <span className="text-text-hi">v{v.version || '?'}</span>{dateStr ? ` · ${dateStr}` : ''}
                                 </div>
                                 {showNotes && latest?.notes?.length ? (
                                     <ul className="mt-2 space-y-1 border-t border-line pt-2">
@@ -93,6 +94,10 @@ export default function EngineUpdateBadge({ plexus }: { plexus: any }) {
                                         {applying ? 'Applying — reconnecting…' : 'Apply update'}
                                     </button>
                                 )}
+                                <button onClick={scan}
+                                    className="mt-2 w-full rounded border border-line py-1.5 text-[10px] text-text-lo transition-colors hover:text-text-hi">
+                                    ⟳ Check for updates
+                                </button>
                             </>
                         )}
                     </div>

@@ -27,7 +27,7 @@ import { ResolutionStatus, ConfirmationVerdict } from '../types';
 import { engineVersion } from '../core/engineVersion';
 import { record as recordEff, summary as effSummary } from '../core/effectiveness';
 import { nextBatch as feedbackBatch, recordAnswer as recordFeedback, summary as feedbackSummary, recentAnswers as feedbackRecent } from '../core/feedback';
-import { readPending, acceptPending, deferPending } from '../core/pendingUpdate';
+import { readPending, acceptPending, deferPending, reconcilePending } from '../core/pendingUpdate';
 import { spawn } from 'child_process';
 
 // Re-exec this process onto the current build (shared by /restart and /accept-update).
@@ -406,7 +406,11 @@ app.post('/api/resolutions/:id/link', (req, res) => {
 // restart. Rebuild the shared dist once; each viz sees update_available and can apply.
 
 app.get('/api/engine/version', (_req, res) => {
-    res.json({ ...engineVersion(), pending: readPending() });
+    const ev = engineVersion();
+    // Reconcile first: if we're already running the queued build (applied via ☰ "Apply
+    // update" or a manual restart, not just the modal), resolve the marker so the modal
+    // stops re-firing and the CRM reflects "updated".
+    res.json({ ...ev, pending: reconcilePending(ev.running_build) });
 });
 
 // ─── Effectiveness telemetry (content-blind "dye") ───────────────

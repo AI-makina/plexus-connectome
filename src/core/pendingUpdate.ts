@@ -49,3 +49,22 @@ export function deferPending(): PendingUpdate | null {
     writePending(p);
     return p;
 }
+
+/**
+ * Self-heal the marker against the build actually running. If the engine is on a build
+ * at/beyond what was queued, the update is done — no matter HOW it was applied (modal
+ * "Update now", the ☰ "Apply update" button, or a manual restart) — so resolve the marker
+ * to 'updated'. Without this, applying via any path other than the modal leaves a stale
+ * 'sent'/'pushed' marker that keeps re-triggering the update modal and shows the wrong
+ * status in the vendor CRM. Idempotent; safe to call at startup and on every version read.
+ */
+export function reconcilePending(runningBuild: number): PendingUpdate | null {
+    const p = readPending();
+    if (!p) return null;
+    if ((p.status === 'sent' || p.status === 'pushed') && runningBuild >= (p.target_build || 0)) {
+        p.status = 'updated';
+        if (!p.responded_at) p.responded_at = new Date().toISOString();
+        writePending(p);
+    }
+    return p;
+}

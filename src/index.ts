@@ -6,6 +6,8 @@ import { CodeAnalyzer } from './analyzer';
 import { ImpactSimulator } from './core/simulator';
 import { PlexusManifest } from './types';
 import { initSession, isAuthDisabled } from './core/session';
+import { reconcilePending } from './core/pendingUpdate';
+import { engineVersion } from './core/engineVersion';
 import { validateCommand, validateAndBuildNode, validateAndBuildSynapse, validateAndBuildAmygdala, validateNodeInput, validateSynapseInput } from './core/validate';
 import fs from 'fs';
 import path from 'path';
@@ -201,6 +203,13 @@ function startServers() {
     app.listen(PORT as number, '127.0.0.1', () => {
         console.log(`[Plexus Engine] API Server running on port ${PORT}`);
         console.log(`[Plexus Engine] Integration Path: ${integrationPath}`);
+        // Booted on a new build? If it satisfies a queued update, resolve the marker now —
+        // before the CRM (which reads the marker file directly) or the viz reads it — so an
+        // update applied via the ☰ button / manual restart isn't stuck showing "pushed".
+        try {
+            const r = reconcilePending(engineVersion().running_build);
+            if (r && r.status === 'updated') console.log(`[Plexus Engine] Update reconciled → v${r.target_version || '?'} installed`);
+        } catch { /* best-effort */ }
     });
 
     // UI Server

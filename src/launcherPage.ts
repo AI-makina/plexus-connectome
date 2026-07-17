@@ -72,6 +72,12 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .steps{color:var(--mid);font-size:13px;line-height:1.9}
   .steps b{color:var(--hi)}
   /* ── Onboarding wizard (first-run) + app-icon splash ── */
+  /* the SAME Inter Variable file the connectome viz bundles — so the wordmark matches 1:1 */
+  @font-face{font-family:'Inter Variable';src:url('/assets/launcher/inter-var.woff2') format('woff2');font-weight:100 1000;font-style:normal;font-display:swap}
+  .wiz-brand{display:flex;align-items:center;justify-content:center;gap:11px;margin-bottom:20px}
+  .wiz-brand img{width:30px;height:30px;border-radius:7px;box-shadow:0 4px 14px rgba(0,0,0,.45)}
+  /* mirror of the viz .wordmark (600 / uppercase / .28em tracking), scaled for a window header */
+  .wiz-wordmark{font:600 15px/1 'Inter Variable',Inter,-apple-system,system-ui,sans-serif;text-transform:uppercase;letter-spacing:.28em;color:var(--hi);margin-right:-.28em}
   .wiz{position:fixed;inset:0;background:radial-gradient(120% 90% at 50% 0%, #14161c 0%, #08090B 62%);display:none;align-items:center;justify-content:center;z-index:100;padding:24px;overflow:hidden}
   .wiz.show{display:flex}
   /* connectome-art backdrop — fades in once the presentation ends (info windows) */
@@ -133,7 +139,6 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
       <div class="wiz-word">Plexus</div>
       <div class="wiz-sub">The evidence layer for your AI</div>
       <div class="wiz-hint">click the icon to begin</div>
-      <div class="powered"><img src="/assets/launcher/skyfynd_logo.png" alt="SkyFynd"> Powered by SkyFynd</div>
     </div>
     <!-- step 1 · presentation — plays ONCE, then auto-transitions to the info windows -->
     <div class="wstep" data-step="1">
@@ -147,6 +152,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     </div>
     <!-- step 2 · connect your AI (one time) -->
     <div class="wstep" data-step="2">
+      <div class="wiz-brand"><img src="/assets/launcher/plexus_icon_2_ultrablack.png" alt=""><span class="wiz-wordmark">Plexus</span></div>
       <div class="wiz-h">Connect Plexus to your AI</div>
       <div class="wiz-p">One time. Pick the AI tools you use — Plexus works the same in all of them, and every project you make is found automatically.</div>
       <div id="wiz-clients"></div>
@@ -158,6 +164,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     </div>
     <!-- step 3 · first project -->
     <div class="wstep" data-step="3">
+      <div class="wiz-brand"><img src="/assets/launcher/plexus_icon_2_ultrablack.png" alt=""><span class="wiz-wordmark">Plexus</span></div>
       <div class="wiz-h">Start your first project</div>
       <div class="wiz-choices">
         <div class="wiz-choice" onclick="wizFinish('v-new')"><b>New project</b><span>Start fresh — Plexus builds the brain before the code exists.</span></div>

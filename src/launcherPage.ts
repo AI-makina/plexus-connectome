@@ -97,7 +97,12 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .wiz-sub{color:var(--mid);font-size:14px}
   .wiz-hint{color:var(--lo);font:12px var(--mono);letter-spacing:.06em;margin-top:20px;animation:pulse 2.2s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
-  .wiz-video{width:100%;max-width:520px;border-radius:14px;border:1px solid var(--line1);box-shadow:0 18px 50px rgba(0,0,0,.5);background:#000;display:block;margin:0 auto}
+  .wiz-vidwrap{position:relative;max-width:560px;margin:0 auto;border-radius:14px;overflow:hidden;border:1px solid var(--line1);box-shadow:0 18px 50px rgba(0,0,0,.5);background:#000}
+  .wiz-vidwrap video{display:block;width:100%}
+  .vid-powered{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;gap:8px;padding:30px 0 13px;background:linear-gradient(to top, rgba(0,0,0,.72), transparent);color:#CFD3DA;font:11px var(--mono);letter-spacing:.04em;pointer-events:none}
+  .vid-powered img{height:16px;opacity:.92}
+  .vid-skip{position:absolute;top:10px;right:12px;color:rgba(255,255,255,.72);font:11px var(--mono);cursor:pointer;background:rgba(0,0,0,.38);padding:4px 11px;border-radius:12px;backdrop-filter:blur(4px)}
+  .vid-skip:hover{color:#fff}
   .wiz-h{font:600 22px var(--sans);margin:22px 0 8px}
   .wiz-p{color:var(--mid);font-size:14px;line-height:1.6;max-width:450px;margin:0 auto 22px}
   .wiz-actions{display:flex;gap:14px;justify-content:center;align-items:center;margin-top:8px}
@@ -140,15 +145,15 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
       <div class="wiz-sub">The evidence layer for your AI</div>
       <div class="wiz-hint">click the icon to begin</div>
     </div>
-    <!-- step 1 · presentation — plays ONCE, then auto-transitions to the info windows -->
+    <!-- step 1 · presentation — just the video (plays once via wizStep(1), NEVER autoplay:
+         a hidden autoplaying video ends early and its onended would skip the presentation).
+         Branding overlays the video itself; nothing below it. -->
     <div class="wstep" data-step="1">
-      <video class="wiz-video" id="wiz-vid" src="/assets/launcher/plexus_launch_presentation.mp4" autoplay muted playsinline onended="wizStep(2)"></video>
-      <div class="wiz-h">Give your AI a memory</div>
-      <div class="wiz-p">Plexus builds a connectome brain for every project — so your AI stops hallucinating APIs, stops repeating mistakes, and picks up exactly where it left off.</div>
-      <div class="wiz-actions">
-        <span class="wiz-skip" onclick="wizStep(2)">skip intro →</span>
+      <div class="wiz-vidwrap">
+        <video id="wiz-vid" src="/assets/launcher/plexus_launch_presentation.mp4" muted playsinline preload="auto" onended="vidEnded()"></video>
+        <span class="vid-skip" onclick="wizStep(2)">skip →</span>
+        <div class="vid-powered"><img src="/assets/launcher/skyfynd_logo.png" alt="SkyFynd"> Powered by SkyFynd</div>
       </div>
-      <div class="powered"><img src="/assets/launcher/skyfynd_logo.png" alt="SkyFynd"> Powered by SkyFynd</div>
     </div>
     <!-- step 2 · connect your AI (one time) -->
     <div class="wstep" data-step="2">
@@ -388,6 +393,8 @@ function wizStep(n){
   if(n===2) loadWizClients();
 }
 function startPresentation(){ wizStep(1); }
+// advance only if the presentation is actually on screen (guards stray ended events)
+function vidEnded(){ var s=document.querySelector('.wstep[data-step="1"]'); if(s && s.classList.contains('active')) wizStep(2); }
 function loadWizClients(){
   var el = document.getElementById('wiz-clients');
   el.innerHTML = '<div class="hint">detecting your AI tools…</div>';

@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import http from 'http';
-import { spawn, execFileSync } from 'child_process';
+import { spawn, execFile, execFileSync } from 'child_process';
 import { LAUNCHER_HTML } from './launcherPage';
 import { MANAGER_HTML } from './managerPage';
 
@@ -106,13 +106,41 @@ function onPath(cmd: string): boolean {
 }
 
 // AI clients Plexus can help connect / open a project in. openBin = its CLI to open a
-// folder (null = terminal tool, no folder CLI). Only Claude Code is introspectable for
+// folder (null = terminal tool, no folder CLI); app = macOS bundle (found even when the
+// user never installed the shell command). Only Claude Code is introspectable for
 // whether Plexus is already registered.
 const AI_CLIENTS = [
-    { id: 'claude', label: 'Claude Code', bin: 'claude', openBin: null as string | null },
-    { id: 'code', label: 'VS Code', bin: 'code', openBin: 'code' as string | null },
-    { id: 'cursor', label: 'Cursor', bin: 'cursor', openBin: 'cursor' as string | null },
+    { id: 'claude', label: 'Claude Code', bin: 'claude', openBin: null as string | null, app: null as string | null },
+    { id: 'code', label: 'VS Code', bin: 'code', openBin: 'code' as string | null, app: '/Applications/Visual Studio Code.app' as string | null },
+    { id: 'cursor', label: 'Cursor', bin: 'cursor', openBin: 'cursor' as string | null, app: '/Applications/Cursor.app' as string | null },
 ];
+function clientInstalled(c: typeof AI_CLIENTS[number]): boolean {
+    return onPath(c.bin) || (!!c.app && process.platform === 'darwin' && fs.existsSync(c.app));
+}
+
+// REAL detection, never a canned list: `which <bin>` / app-bundle existence per client,
+// plus — Claude Code only — `claude mcp list` grepped for plexus (is it registered?).
+// Async so the slow CLI never blocks the launcher, cached 60s, prewarmed at startup so
+// the wizard's connect step renders instantly.
+let clientsCache: { at: number; clients: any[] } | null = null;
+async function detectClients(force = false): Promise<any[]> {
+    if (!force && clientsCache && Date.now() - clientsCache.at < 60000) return clientsCache.clients;
+    const clients = [];
+    for (const c of AI_CLIENTS) {
+        const installed = clientInstalled(c);
+        let connected: boolean | undefined;
+        if (c.id === 'claude' && installed) {
+            connected = await new Promise<boolean | undefined>(resolve => {
+                execFile('claude', ['mcp', 'list'], { encoding: 'utf8', timeout: 10000 }, (err, stdout) => {
+                    resolve(err ? undefined : /plexus/i.test(String(stdout)));
+                });
+            });
+        }
+        clients.push({ id: c.id, label: c.label, installed, can_open_folder: !!(c.openBin || c.app), connected });
+    }
+    clientsCache = { at: Date.now(), clients };
+    return clients;
+}
 
 // ─── Server ───────────────────────────────────────────────────────────────────
 
@@ -485,19 +513,8 @@ export function startLauncher(open = true) {
     });
 
     // ── AI clients: which are installed + (Claude Code only) is Plexus already connected ──
-    app.get('/api/launcher/clients', (_req, res) => {
-        let claudeConnected: boolean | undefined;
-        if (onPath('claude')) {
-            try { claudeConnected = /plexus/i.test(execFileSync('claude', ['mcp', 'list'], { encoding: 'utf8', timeout: 8000 })); }
-            catch { claudeConnected = undefined; }
-        }
-        const clients = AI_CLIENTS.map(c => ({
-            id: c.id, label: c.label,
-            installed: onPath(c.bin),
-            can_open_folder: !!c.openBin,
-            connected: c.id === 'claude' ? claudeConnected : undefined,
-        }));
-        res.json({ clients, global_mcp: `claude mcp add --scope user plexus -- node "${CLI}" mcp` });
+    app.get('/api/launcher/clients', async (_req, res) => {
+        res.json({ clients: await detectClients(), global_mcp: `claude mcp add --scope user plexus -- node "${CLI}" mcp` });
     });
 
     // ── Connect Plexus to an AI client (one-time). Claude Code = run it for the user;
@@ -508,6 +525,7 @@ export function startLauncher(open = true) {
         if (client === 'claude') {
             try {
                 const out = execFileSync('claude', ['mcp', 'add', '--scope', 'user', 'plexus', '--', process.execPath, CLI, 'mcp'], { encoding: 'utf8', timeout: 15000 });
+                clientsCache = null; // re-detect so the ✓ shows immediately
                 return res.json({ ok: true, ran: true, output: String(out).trim(), command: globalCmd });
             } catch (err: any) {
                 const msg = String(err?.stderr || err?.message || err);
@@ -535,6 +553,11 @@ export function startLauncher(open = true) {
                 spawn(spec.openBin, [projectPath], { detached: true, stdio: 'ignore' }).unref();
                 return res.json({ ok: true, opened: spec.label });
             }
+            if (spec?.app && process.platform === 'darwin' && fs.existsSync(spec.app)) {
+                // app installed but its shell command isn't — open the bundle directly
+                spawn('open', ['-a', spec.app, projectPath], { detached: true, stdio: 'ignore' }).unref();
+                return res.json({ ok: true, opened: spec.label });
+            }
             if (client === 'folder') { // reveal in Finder / Explorer
                 const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
                 spawn(opener, [projectPath], { detached: true, stdio: 'ignore' }).unref();
@@ -552,6 +575,7 @@ export function startLauncher(open = true) {
 
     app.listen(LAUNCHER_PORT, '127.0.0.1', () => {
         console.log(`⬡ Plexus Launcher → http://localhost:${LAUNCHER_PORT}`);
+        setTimeout(() => { detectClients().catch(() => { /* prewarm only */ }); }, 300);
         if (open && !process.env.PLEXUS_NO_OPEN) {
             try { require('open')(`http://localhost:${LAUNCHER_PORT}`); } catch { /* headless */ }
         }

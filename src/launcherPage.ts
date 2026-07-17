@@ -411,7 +411,9 @@ function wizConnect(id, btn){
       var box = document.getElementById('wiz-connect-result');
       if(r.ok && r.ran){ btn.textContent='connected ✓'; box.innerHTML='<div class="wiz-ok">✓ Connected. Plexus now works in every project for this AI.</div>'; }
       else if(r.ok && r.already){ btn.textContent='already connected ✓'; }
-      else if(r.manual){ btn.disabled=false; btn.textContent='Connect'; box.innerHTML='<div class="wiz-manual">Add this to '+esc(id)+' MCP config, then reopen it:<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(r.config_json||r.command)+'</div></div>'; }
+      else if(r.manual){ btn.disabled=false; btn.textContent='Connect';
+        var where = r.config_path ? 'Merge this into <span class="mono" style="color:var(--ice)">'+esc(r.config_path)+'</span> — then restart it:' : 'Add this to '+esc(id)+' MCP config, then reopen it:';
+        box.innerHTML='<div class="wiz-manual">'+where+'<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(r.config_json||r.command)+'</div></div>'; }
       else { btn.disabled=false; btn.textContent='Connect'; box.innerHTML='<div class="wiz-manual">Run this in a terminal:<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(r.command)+'</div>'+(r.error?'<div class="hint">'+esc(r.error)+'</div>':'')+'</div>'; }
     }).catch(function(){ btn.disabled=false; btn.textContent='Connect'; });
 }
@@ -432,7 +434,7 @@ function resumeWith(pathStr){
   var el = document.getElementById('rm-clients');
   el.innerHTML = '<div class="hint">detecting editors…</div>';
   fetch('/api/launcher/clients').then(function(x){return x.json();}).then(function(r){
-    var installed = (r.clients||[]).filter(function(c){return c.installed;});
+    var installed = (r.clients||[]).filter(function(c){return c.installed && (c.can_open_folder || c.id==='claude');});
     var rows = installed.map(function(c){ return '<button onclick="openIn(\\''+c.id+'\\',this)">Open in '+esc(c.label)+'</button>'; }).join('');
     el.innerHTML = (rows || '<div class="hint">No editors detected on PATH — use the command below.</div>') + '<button onclick="openIn(\\'folder\\',this)">Open folder</button>';
   }).catch(function(){ el.innerHTML='<div class="hint">detection failed — use the command below.</div>'; });

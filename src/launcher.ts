@@ -106,16 +106,33 @@ function onPath(cmd: string): boolean {
 }
 
 // AI clients Plexus can help connect / open a project in. openBin = its CLI to open a
-// folder (null = terminal tool, no folder CLI); app = macOS bundle (found even when the
-// user never installed the shell command). Only Claude Code is introspectable for
-// whether Plexus is already registered.
-const AI_CLIENTS = [
-    { id: 'claude', label: 'Claude Code', bin: 'claude', openBin: null as string | null, app: null as string | null },
-    { id: 'code', label: 'VS Code', bin: 'code', openBin: 'code' as string | null, app: '/Applications/Visual Studio Code.app' as string | null },
-    { id: 'cursor', label: 'Cursor', bin: 'cursor', openBin: 'cursor' as string | null, app: '/Applications/Cursor.app' as string | null },
+// folder (null = no folder CLI); app = macOS bundle (found even when the user never
+// installed the shell command); mcpConfig = the JSON file the client reads MCP servers
+// from (lets us introspect "already connected" AND tell the user exactly where to paste).
+interface AiClient { id: string; label: string; bin: string | null; openBin: string | null; app: string | null; mcpConfig?: string }
+const ANTIGRAVITY_MCP_CONFIG = path.join(os.homedir(), '.gemini', 'antigravity', 'mcp_config.json');
+const CLAUDE_DESKTOP_CONFIG = path.join(os.homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
+const AI_CLIENTS: AiClient[] = [
+    { id: 'claude', label: 'Claude Code', bin: 'claude', openBin: null, app: null },
+    { id: 'antigravity', label: 'Antigravity', bin: 'antigravity', openBin: 'antigravity', app: '/Applications/Antigravity.app', mcpConfig: ANTIGRAVITY_MCP_CONFIG },
+    { id: 'code', label: 'VS Code', bin: 'code', openBin: 'code', app: '/Applications/Visual Studio Code.app' },
+    { id: 'cursor', label: 'Cursor', bin: 'cursor', openBin: 'cursor', app: '/Applications/Cursor.app' },
+    { id: 'claude-desktop', label: 'Claude Desktop', bin: null, openBin: null, app: '/Applications/Claude.app', mcpConfig: CLAUDE_DESKTOP_CONFIG },
 ];
-function clientInstalled(c: typeof AI_CLIENTS[number]): boolean {
-    return onPath(c.bin) || (!!c.app && process.platform === 'darwin' && fs.existsSync(c.app));
+function clientInstalled(c: AiClient): boolean {
+    return (!!c.bin && onPath(c.bin)) || (!!c.app && process.platform === 'darwin' && fs.existsSync(c.app));
+}
+
+// Is plexus registered in a client's mcpServers config? false = file absent or no entry
+// (honestly not connected); undefined = file unreadable (unknown).
+function mcpConfigHasPlexus(file: string): boolean | undefined {
+    if (!fs.existsSync(file)) return false;
+    try {
+        const raw = fs.readFileSync(file, 'utf8').trim();
+        if (!raw) return false; // created-but-empty config = definitively not registered
+        const j = JSON.parse(raw);
+        return !!(j?.mcpServers && j.mcpServers.plexus);
+    } catch { return undefined; } // unreadable/nonstandard — unknown, don't claim either way
 }
 
 // REAL detection, never a canned list: `which <bin>` / app-bundle existence per client,
@@ -129,14 +146,16 @@ async function detectClients(force = false): Promise<any[]> {
     for (const c of AI_CLIENTS) {
         const installed = clientInstalled(c);
         let connected: boolean | undefined;
-        if (c.id === 'claude' && installed) {
+        if (installed && c.id === 'claude') {
             connected = await new Promise<boolean | undefined>(resolve => {
                 execFile('claude', ['mcp', 'list'], { encoding: 'utf8', timeout: 10000 }, (err, stdout) => {
                     resolve(err ? undefined : /plexus/i.test(String(stdout)));
                 });
             });
+        } else if (installed && c.mcpConfig) {
+            connected = mcpConfigHasPlexus(c.mcpConfig); // Antigravity / Claude Desktop
         }
-        clients.push({ id: c.id, label: c.label, installed, can_open_folder: !!(c.openBin || c.app), connected });
+        clients.push({ id: c.id, label: c.label, installed, can_open_folder: !!c.openBin, connected });
     }
     clientsCache = { at: Date.now(), clients };
     return clients;
@@ -533,11 +552,16 @@ export function startLauncher(open = true) {
                 return res.json({ ok: already, ran: false, already, error: already ? undefined : msg, command: globalCmd });
             }
         }
-        // VS Code / Cursor / other MCP client: give them the server config to paste.
+        // Antigravity / Claude Desktop / VS Code / Cursor: hand back the server config to
+        // paste — with the exact file path when the client's config location is known.
+        const spec = AI_CLIENTS.find(c => c.id === client);
         res.json({
             ok: false, ran: false, manual: true, command: globalCmd,
+            config_path: spec?.mcpConfig,
             config_json: JSON.stringify({ mcpServers: { plexus: { command: process.execPath, args: [CLI, 'mcp'] } } }, null, 2),
-            note: `Add Plexus to ${client}'s MCP config, then reopen it.`,
+            note: spec?.mcpConfig
+                ? `Merge this into the file, then restart ${spec.label}.`
+                : `Add Plexus to ${spec?.label || client}'s MCP config, then reopen it.`,
         });
     });
 
@@ -553,8 +577,8 @@ export function startLauncher(open = true) {
                 spawn(spec.openBin, [projectPath], { detached: true, stdio: 'ignore' }).unref();
                 return res.json({ ok: true, opened: spec.label });
             }
-            if (spec?.app && process.platform === 'darwin' && fs.existsSync(spec.app)) {
-                // app installed but its shell command isn't — open the bundle directly
+            if (spec?.openBin && spec.app && process.platform === 'darwin' && fs.existsSync(spec.app)) {
+                // editor installed but its shell command isn't — open the bundle directly
                 spawn('open', ['-a', spec.app, projectPath], { detached: true, stdio: 'ignore' }).unref();
                 return res.json({ ok: true, opened: spec.label });
             }

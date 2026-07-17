@@ -14,7 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import http from 'http';
 import { spawn } from 'child_process';
-import { findProjectRoot, registerProject, patchManifestPorts } from './core/registry';
+import { findProjectRoot, projectBoundary, registerProject, patchManifestPorts } from './core/registry';
 
 // Project resolution — AI-FIRST workflow (no -p needed): register this MCP
 // server ONCE globally (`claude mcp add --scope user plexus -- plexus mcp`)
@@ -22,12 +22,28 @@ import { findProjectRoot, registerProject, patchManifestPorts } from './core/reg
 // exists yet, the init_project tool creates one from the user's own words.
 const argv = process.argv.slice(2);
 const pIdx = Math.max(argv.indexOf('-p'), argv.indexOf('--path'));
-let targetPath = pIdx >= 0
-    ? path.resolve(argv[pIdx + 1])
-    : (findProjectRoot(process.cwd()) || path.resolve(process.cwd()));
+const CWD = path.resolve(process.cwd());
+const explicitPath = pIdx >= 0 ? path.resolve(argv[pIdx + 1]) : null;
+// Boundary-aware: findProjectRoot won't escape across a git repo into a parent's brain.
+// If no brain is found within this project, a NEW one is rooted at the project boundary
+// (git root) — never a deep subfolder, and never a parent connectome.
+const foundBrain = explicitPath ? null : findProjectRoot(CWD);
+let targetPath = explicitPath || foundBrain || projectBoundary(CWD);
 let integrationPath = path.join(targetPath, 'plexus-integration');
 
 const hasBrain = () => fs.existsSync(integrationPath);
+
+// Did we attach to a brain that lives ABOVE where we launched? Cross-repo escapes are
+// already blocked; this only flags the residual ambiguous case (a manifest-bearing folder
+// with no git of its own nested under a parent brain) so the AI can surface it, not seed
+// the wrong connectome silently.
+const resolvedFromParent = !explicitPath && !!foundBrain && foundBrain !== CWD;
+function looksLikeOwnProject(dir: string): boolean {
+    return ['package.json', 'pyproject.toml', 'setup.py', 'Cargo.toml', 'go.mod', 'pom.xml',
+        'build.gradle', 'Gemfile', 'composer.json', 'requirements.txt']
+        .some((m) => fs.existsSync(path.join(dir, m)));
+}
+const parentMisresolveRisk = resolvedFromParent && looksLikeOwnProject(CWD);
 
 // Auto-start (zero-touch): if the brain exists but its engine isn't running,
 // boot it — the user should never have to remember `plexus serve`.
@@ -224,6 +240,15 @@ async function callTool(name: string, args: any): Promise<string> {
     switch (name) {
         case 'init_project': {
             if (hasBrain()) {
+                if (resolvedFromParent) {
+                    return [
+                        `A brain already exists at ${targetPath} — but that is a PARENT of where you're working (${CWD}).`,
+                        `It belongs to an enclosing project. Do NOT seed it with this project's work.`,
+                        `To start a SEPARATE brain here, either run \`git init\` in ${CWD} (or make it a top-level`,
+                        `folder) and relaunch, or register a pinned server for it:`,
+                        `  claude mcp add plexus -- node "${path.join(__dirname, 'cli.js')}" mcp -p "${CWD}"`,
+                    ].join('\n');
+                }
                 return `A brain already exists at ${targetPath} — call session_open instead.`;
             }
             const { execFileSync } = require('child_process');
@@ -306,6 +331,19 @@ async function callTool(name: string, args: any): Promise<string> {
                 `graph: ${s.total_nodes} nodes · ${s.total_synapses} synapses · ${s.total_amygdala === 0 ? 'amygdala empty (no incidents yet — healthy)' : s.total_amygdala + ' amygdala entries'} · ${freshness}`,
                 `families: ${Object.entries(s.synapse_families || {}).map(([k, v]) => `${k}:${v}`).join(' ')}`,
             ];
+
+            // Mis-resolution guard: you launched from a folder that looks like its own project
+            // (${CWD}) yet the brain lives in a PARENT (${targetPath}). Don't silently pollute a
+            // parent connectome with a child's work — surface it and let the user decide.
+            if (parentMisresolveRisk) {
+                lines.push(
+                    '',
+                    `⚠ RESOLVED FROM A PARENT — this brain is at ${targetPath}, but you started in ${CWD},`,
+                    `which looks like its own project. If this work belongs to a SEPARATE project, STOP and tell`,
+                    `the user: give ${CWD} its own brain (\`git init\` there + relaunch, or a pinned \`-p "${CWD}"\``,
+                    `server) instead of adding it here. Only continue on this brain if ${path.basename(CWD)} is`,
+                    `genuinely part of ${path.basename(targetPath)}.`);
+            }
 
             // GENESIS HANDOFF: a fresh brain carrying a founder's brief means
             // the interview is THIS session's first job — the AI runs it

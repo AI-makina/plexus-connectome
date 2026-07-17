@@ -57,13 +57,40 @@ export function patchManifestPorts(projectPath: string, apiPort: number, wsPort:
 }
 
 /** Walk up from cwd to the nearest folder that has a Plexus brain. */
+// A directory that delimits a distinct project. A nested git repo is definitively its OWN
+// project, so brain resolution must never escape ACROSS one into an ancestor — that escape
+// is exactly what makes a freshly `git init`-ed child silently attach to a parent connectome.
+export function isProjectBoundary(dir: string): boolean {
+    return fs.existsSync(path.join(dir, '.git'));
+}
+
+// Nearest ancestor (incl. startDir) that holds a brain — but STOPS at a project boundary.
+// If the enclosing git repo has no brain of its own, a brain that lives above the repo
+// belongs to a DIFFERENT project and must not be resolved into. Returns null when there is
+// no brain within the current project. (Nearest brain still wins for legit subfolders,
+// because the brain check runs before the boundary check at each level.)
 export function findProjectRoot(startDir: string): string | null {
     let dir = path.resolve(startDir);
     for (let i = 0; i < 12; i++) {
-        if (fs.existsSync(path.join(dir, 'plexus-integration'))) return dir;
+        if (fs.existsSync(path.join(dir, 'plexus-integration'))) return dir; // nearest brain wins
+        if (isProjectBoundary(dir)) return null; // don't cross a repo boundary into a parent's brain
         const parent = path.dirname(dir);
         if (parent === dir) break;
         dir = parent;
     }
     return null;
+}
+
+// Where a NEW brain should be rooted for a session started in startDir: the enclosing
+// project boundary (git repo root) if there is one, else startDir itself. Keeps a new brain
+// at the project root instead of whatever deep subfolder the AI happened to launch from.
+export function projectBoundary(startDir: string): string {
+    let dir = path.resolve(startDir);
+    for (let i = 0; i < 12; i++) {
+        if (isProjectBoundary(dir)) return dir;
+        const parent = path.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+    }
+    return path.resolve(startDir);
 }

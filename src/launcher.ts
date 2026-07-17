@@ -109,15 +109,22 @@ function onPath(cmd: string): boolean {
 // folder (null = no folder CLI); app = macOS bundle (found even when the user never
 // installed the shell command); mcpConfig = the JSON file the client reads MCP servers
 // from (lets us introspect "already connected" AND tell the user exactly where to paste).
-interface AiClient { id: string; label: string; bin: string | null; openBin: string | null; app: string | null; bundleId?: string; mcpConfig?: string }
+interface AiClient { id: string; label: string; bin: string | null; openBin: string | null; app: string | null; bundleId?: string; mcpConfig?: string; hint?: string }
 const ANTIGRAVITY_MCP_CONFIG = path.join(os.homedir(), '.gemini', 'antigravity', 'mcp_config.json');
 const CLAUDE_DESKTOP_CONFIG = path.join(os.homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
+// hint = who this plug actually serves. The rule users trip on: you connect the AI AGENT,
+// not the window it runs in — a CLI carries its own plug into any IDE's terminal.
 const AI_CLIENTS: AiClient[] = [
-    { id: 'claude', label: 'Claude Code', bin: 'claude', openBin: null, app: null },
-    { id: 'antigravity', label: 'Antigravity', bin: 'antigravity', openBin: 'antigravity', app: '/Applications/Antigravity.app', bundleId: 'com.google.antigravity', mcpConfig: ANTIGRAVITY_MCP_CONFIG },
-    { id: 'code', label: 'VS Code', bin: 'code', openBin: 'code', app: '/Applications/Visual Studio Code.app', bundleId: 'com.microsoft.VSCode' },
-    { id: 'cursor', label: 'Cursor', bin: 'cursor', openBin: 'cursor', app: '/Applications/Cursor.app', bundleId: 'com.todesktop.230313mzl4w4u92' },
-    { id: 'claude-desktop', label: 'Claude Desktop', bin: null, openBin: null, app: '/Applications/Claude.app', bundleId: 'com.anthropic.claudefordesktop', mcpConfig: CLAUDE_DESKTOP_CONFIG },
+    { id: 'claude', label: 'Claude Code', bin: 'claude', openBin: null, app: null,
+        hint: 'The claude CLI — one connect covers every terminal, including inside VS Code or Antigravity.' },
+    { id: 'antigravity', label: 'Antigravity', bin: 'antigravity', openBin: 'antigravity', app: '/Applications/Antigravity.app', bundleId: 'com.google.antigravity', mcpConfig: ANTIGRAVITY_MCP_CONFIG,
+        hint: 'Antigravity’s built-in agent only. CLIs in its terminal use their own connect.' },
+    { id: 'code', label: 'VS Code', bin: 'code', openBin: 'code', app: '/Applications/Visual Studio Code.app', bundleId: 'com.microsoft.VSCode',
+        hint: 'VS Code’s built-in AI (Copilot agent mode) only — not needed for Claude Code in its terminal.' },
+    { id: 'cursor', label: 'Cursor', bin: 'cursor', openBin: 'cursor', app: '/Applications/Cursor.app', bundleId: 'com.todesktop.230313mzl4w4u92',
+        hint: 'Cursor’s built-in agent.' },
+    { id: 'claude-desktop', label: 'Claude Desktop', bin: null, openBin: null, app: '/Applications/Claude.app', bundleId: 'com.anthropic.claudefordesktop', mcpConfig: CLAUDE_DESKTOP_CONFIG,
+        hint: 'The Claude chat app.' },
 ];
 
 // Where the client's app actually lives: the conventional /Applications path, else a
@@ -170,7 +177,7 @@ async function detectClients(force = false): Promise<any[]> {
         } else if (installed && c.mcpConfig) {
             connected = mcpConfigHasPlexus(c.mcpConfig); // Antigravity / Claude Desktop
         }
-        clients.push({ id: c.id, label: c.label, installed, can_open_folder: !!c.openBin, connected });
+        clients.push({ id: c.id, label: c.label, installed, can_open_folder: !!c.openBin, connected, hint: c.hint });
     }
     clientsCache = { at: Date.now(), clients };
     return clients;

@@ -109,6 +109,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .clientrow{display:flex;align-items:center;gap:12px;background:var(--ink1);border:1px solid var(--line1);border-radius:9px;padding:12px 15px;margin:8px 0;text-align:left}
   .clientrow .ci{flex:1;min-width:0}.clientrow .ci b{font-size:14px}
   .clientrow .c-state{font:10px var(--mono);color:var(--lo);margin-left:8px;text-transform:uppercase;letter-spacing:.06em}
+  .clientrow .c-hint{font-size:10.5px;color:var(--lo);margin-top:2px;line-height:1.4}
   .clientrow .ok{color:var(--jade);font-size:16px}
   .wiz-ok{color:var(--jade);font-size:13px;margin:10px 0;background:rgba(115,201,145,.1);border:1px solid rgba(115,201,145,.3);border-radius:8px;padding:9px 12px}
   .wiz-manual{font-size:12px;color:var(--mid);text-align:left;margin:10px 0}
@@ -400,7 +401,7 @@ function loadWizClients(){
     el.innerHTML = CLIENTS.map(function(c){
       var state = !c.installed ? 'not detected' : (c.connected===true ? 'connected' : (c.connected===false ? 'not connected' : 'installed'));
       var right = c.connected===true ? '<span class="ok">✓</span>' : '<button onclick="wizConnect(\\''+c.id+'\\',this)">Connect</button>';
-      return '<div class="clientrow"><div class="ci"><b>'+esc(c.label)+'</b><span class="c-state">'+state+'</span></div>'+right+'</div>';
+      return '<div class="clientrow"><div class="ci"><b>'+esc(c.label)+'</b><span class="c-state">'+state+'</span>'+(c.hint?'<div class="c-hint">'+esc(c.hint)+'</div>':'')+'</div>'+right+'</div>';
     }).join('');
   }).catch(function(){ el.innerHTML='<div class="hint">could not detect AI tools</div>'; });
 }

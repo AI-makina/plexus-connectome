@@ -57,23 +57,46 @@ export function patchManifestPorts(projectPath: string, apiPort: number, wsPort:
 }
 
 /** Walk up from cwd to the nearest folder that has a Plexus brain. */
-// A directory that delimits a distinct project. A nested git repo is definitively its OWN
-// project, so brain resolution must never escape ACROSS one into an ancestor — that escape
-// is exactly what makes a freshly `git init`-ed child silently attach to a parent connectome.
+// A nested git repo is definitively its OWN project — resolution must never escape ACROSS
+// one into an ancestor's brain (that escape is what makes a freshly `git init`-ed child
+// silently attach to a parent connectome).
 export function isProjectBoundary(dir: string): boolean {
     return fs.existsSync(path.join(dir, '.git'));
 }
 
-// Nearest ancestor (incl. startDir) that holds a brain — but STOPS at a project boundary.
-// If the enclosing git repo has no brain of its own, a brain that lives above the repo
-// belongs to a DIFFERENT project and must not be resolved into. Returns null when there is
-// no brain within the current project. (Nearest brain still wins for legit subfolders,
-// because the brain check runs before the boundary check at each level.)
+// A monorepo/workspace ROOT even without git (zip downloads, not-yet-inited repos). These
+// markers only ever sit at the workspace root, never in a package, so treating them as a
+// project root cannot re-fragment a monorepo into per-package brains.
+export function isWorkspaceRoot(dir: string): boolean {
+    for (const f of ['pnpm-workspace.yaml', 'lerna.json', 'nx.json', 'turbo.json', 'rush.json', 'go.work']) {
+        if (fs.existsSync(path.join(dir, f))) return true;
+    }
+    try { // npm / yarn workspaces — a "workspaces" field lives only at the root package.json
+        const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+        if (pkg && pkg.workspaces) return true;
+    } catch { /* no / invalid package.json */ }
+    try { // Rust workspaces — a [workspace] table in the root Cargo.toml
+        if (/^\s*\[workspace\]/m.test(fs.readFileSync(path.join(dir, 'Cargo.toml'), 'utf8'))) return true;
+    } catch { /* no Cargo.toml */ }
+    return false;
+}
+
+// The boundary of a distinct project: a git repo root OR a workspace root. Resolution stops
+// here and a new brain roots here.
+export function isProjectRoot(dir: string): boolean {
+    return isProjectBoundary(dir) || isWorkspaceRoot(dir);
+}
+
+// Nearest ancestor (incl. startDir) that holds a brain — but STOPS at a project root. If the
+// enclosing project has no brain of its own, a brain that lives above it belongs to a
+// DIFFERENT project and must not be resolved into. Returns null when there is no brain within
+// the current project. (Nearest brain still wins for legit subfolders, because the brain
+// check runs before the boundary check at each level.)
 export function findProjectRoot(startDir: string): string | null {
     let dir = path.resolve(startDir);
     for (let i = 0; i < 12; i++) {
         if (fs.existsSync(path.join(dir, 'plexus-integration'))) return dir; // nearest brain wins
-        if (isProjectBoundary(dir)) return null; // don't cross a repo boundary into a parent's brain
+        if (isProjectRoot(dir)) return null; // don't cross a project boundary into a parent's brain
         const parent = path.dirname(dir);
         if (parent === dir) break;
         dir = parent;
@@ -81,13 +104,14 @@ export function findProjectRoot(startDir: string): string | null {
     return null;
 }
 
-// Where a NEW brain should be rooted for a session started in startDir: the enclosing
-// project boundary (git repo root) if there is one, else startDir itself. Keeps a new brain
-// at the project root instead of whatever deep subfolder the AI happened to launch from.
+// Where a NEW brain should be rooted for a session started in startDir: the enclosing project
+// root (git repo root or monorepo/workspace root) if there is one, else startDir itself. This
+// is what keeps every package of a monorepo — even a gitless one — on ONE shared brain at the
+// root, instead of fragmenting a brain into whatever subfolder the AI launched from.
 export function projectBoundary(startDir: string): string {
     let dir = path.resolve(startDir);
     for (let i = 0; i < 12; i++) {
-        if (isProjectBoundary(dir)) return dir;
+        if (isProjectRoot(dir)) return dir;
         const parent = path.dirname(dir);
         if (parent === dir) break;
         dir = parent;

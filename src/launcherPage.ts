@@ -72,9 +72,14 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .steps{color:var(--mid);font-size:13px;line-height:1.9}
   .steps b{color:var(--hi)}
   /* ── Onboarding wizard (first-run) + app-icon splash ── */
-  .wiz{position:fixed;inset:0;background:radial-gradient(120% 90% at 50% 0%, #14161c 0%, #08090B 62%);display:none;align-items:center;justify-content:center;z-index:100;padding:24px}
+  .wiz{position:fixed;inset:0;background:radial-gradient(120% 90% at 50% 0%, #14161c 0%, #08090B 62%);display:none;align-items:center;justify-content:center;z-index:100;padding:24px;overflow:hidden}
   .wiz.show{display:flex}
-  .wiz-card{width:100%;max-width:560px;text-align:center}
+  /* connectome-art backdrop — fades in once the presentation ends (info windows) */
+  .wiz .artbg{position:absolute;inset:0;background:url('/assets/launcher/Connectome_art.png') center/cover no-repeat;opacity:0;transition:opacity .8s ease;pointer-events:none}
+  .wiz .artbg::after{content:'';position:absolute;inset:0;background:radial-gradient(110% 85% at 50% 42%, rgba(8,9,11,.42) 0%, rgba(8,9,11,.88) 100%)}
+  .wiz.art .artbg{opacity:1}
+  .wiz-card{width:100%;max-width:560px;text-align:center;position:relative;z-index:1}
+  .wiz.art .wiz-card{background:rgba(10,11,14,.62);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid var(--line1);border-radius:18px;padding:36px 32px;box-shadow:0 26px 80px rgba(0,0,0,.55)}
   .wstep{display:none}
   .wstep.active{display:block;animation:wfade .4s ease}
   @keyframes wfade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -120,6 +125,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
 
 <!-- ── ONBOARDING WIZARD (first run) ── -->
 <div class="wiz" id="wizard">
+  <div class="artbg"></div>
   <div class="wiz-card">
     <!-- step 0 · app icon → click to begin -->
     <div class="wstep active" data-step="0">
@@ -129,15 +135,15 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
       <div class="wiz-hint">click the icon to begin</div>
       <div class="powered"><img src="/assets/launcher/skyfynd_logo.png" alt="SkyFynd"> Powered by SkyFynd</div>
     </div>
-    <!-- step 1 · presentation -->
+    <!-- step 1 · presentation — plays ONCE, then auto-transitions to the info windows -->
     <div class="wstep" data-step="1">
-      <video class="wiz-video" id="wiz-vid" src="/assets/launcher/plexus_launch_presentation.mp4" autoplay muted loop playsinline></video>
+      <video class="wiz-video" id="wiz-vid" src="/assets/launcher/plexus_launch_presentation.mp4" autoplay muted playsinline onended="wizStep(2)"></video>
       <div class="wiz-h">Give your AI a memory</div>
       <div class="wiz-p">Plexus builds a connectome brain for every project — so your AI stops hallucinating APIs, stops repeating mistakes, and picks up exactly where it left off.</div>
       <div class="wiz-actions">
-        <button class="primary" onclick="wizStep(2)">Get started</button>
-        <span class="wiz-skip" onclick="wizFinish(null)">Skip setup →</span>
+        <span class="wiz-skip" onclick="wizStep(2)">skip intro →</span>
       </div>
+      <div class="powered"><img src="/assets/launcher/skyfynd_logo.png" alt="SkyFynd"> Powered by SkyFynd</div>
     </div>
     <!-- step 2 · connect your AI (one time) -->
     <div class="wstep" data-step="2">
@@ -368,8 +374,11 @@ function checkOnboarding(){
 function wizStep(n){
   var steps = document.querySelectorAll('.wstep');
   for(var i=0;i<steps.length;i++){ steps[i].classList.toggle('active', parseInt(steps[i].getAttribute('data-step'),10)===n); }
+  document.getElementById('wizard').classList.toggle('art', n>=2); // info windows sit over the connectome art
+  var v=document.getElementById('wiz-vid');
+  if(n===1){ if(v){ try{ v.currentTime=0; v.play(); }catch(e){} } }
+  else if(v){ try{ v.pause(); }catch(e){} } // else a hidden video's onended could drag the user back
   if(n===2) loadWizClients();
-  if(n===1){ var v=document.getElementById('wiz-vid'); if(v){ try{ v.currentTime=0; v.play(); }catch(e){} } }
 }
 function startPresentation(){ wizStep(1); }
 function loadWizClients(){

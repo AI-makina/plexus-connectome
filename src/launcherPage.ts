@@ -101,8 +101,6 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .wiz-vidwrap video{display:block;width:100%}
   .vid-powered{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;gap:8px;padding:30px 0 13px;background:linear-gradient(to top, rgba(0,0,0,.72), transparent);color:#CFD3DA;font:11px var(--mono);letter-spacing:.04em;pointer-events:none}
   .vid-powered img{height:16px;opacity:.92}
-  .vid-skip{position:absolute;top:10px;right:12px;color:rgba(255,255,255,.72);font:11px var(--mono);cursor:pointer;background:rgba(0,0,0,.38);padding:4px 11px;border-radius:12px;backdrop-filter:blur(4px)}
-  .vid-skip:hover{color:#fff}
   .wiz-h{font:600 22px var(--sans);margin:22px 0 8px}
   .wiz-p{color:var(--mid);font-size:14px;line-height:1.6;max-width:450px;margin:0 auto 22px}
   .wiz-actions{display:flex;gap:14px;justify-content:center;align-items:center;margin-top:8px}
@@ -151,7 +149,6 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <div class="wstep" data-step="1">
       <div class="wiz-vidwrap">
         <video id="wiz-vid" src="/assets/launcher/plexus_launch_presentation.mp4" muted playsinline preload="auto" onended="vidEnded()"></video>
-        <span class="vid-skip" onclick="wizStep(2)">skip →</span>
         <div class="vid-powered"><img src="/assets/launcher/skyfynd_logo.png" alt="SkyFynd"> Powered by SkyFynd</div>
       </div>
     </div>

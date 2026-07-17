@@ -109,18 +109,33 @@ function onPath(cmd: string): boolean {
 // folder (null = no folder CLI); app = macOS bundle (found even when the user never
 // installed the shell command); mcpConfig = the JSON file the client reads MCP servers
 // from (lets us introspect "already connected" AND tell the user exactly where to paste).
-interface AiClient { id: string; label: string; bin: string | null; openBin: string | null; app: string | null; mcpConfig?: string }
+interface AiClient { id: string; label: string; bin: string | null; openBin: string | null; app: string | null; bundleId?: string; mcpConfig?: string }
 const ANTIGRAVITY_MCP_CONFIG = path.join(os.homedir(), '.gemini', 'antigravity', 'mcp_config.json');
 const CLAUDE_DESKTOP_CONFIG = path.join(os.homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
 const AI_CLIENTS: AiClient[] = [
     { id: 'claude', label: 'Claude Code', bin: 'claude', openBin: null, app: null },
-    { id: 'antigravity', label: 'Antigravity', bin: 'antigravity', openBin: 'antigravity', app: '/Applications/Antigravity.app', mcpConfig: ANTIGRAVITY_MCP_CONFIG },
-    { id: 'code', label: 'VS Code', bin: 'code', openBin: 'code', app: '/Applications/Visual Studio Code.app' },
-    { id: 'cursor', label: 'Cursor', bin: 'cursor', openBin: 'cursor', app: '/Applications/Cursor.app' },
-    { id: 'claude-desktop', label: 'Claude Desktop', bin: null, openBin: null, app: '/Applications/Claude.app', mcpConfig: CLAUDE_DESKTOP_CONFIG },
+    { id: 'antigravity', label: 'Antigravity', bin: 'antigravity', openBin: 'antigravity', app: '/Applications/Antigravity.app', bundleId: 'com.google.antigravity', mcpConfig: ANTIGRAVITY_MCP_CONFIG },
+    { id: 'code', label: 'VS Code', bin: 'code', openBin: 'code', app: '/Applications/Visual Studio Code.app', bundleId: 'com.microsoft.VSCode' },
+    { id: 'cursor', label: 'Cursor', bin: 'cursor', openBin: 'cursor', app: '/Applications/Cursor.app', bundleId: 'com.todesktop.230313mzl4w4u92' },
+    { id: 'claude-desktop', label: 'Claude Desktop', bin: null, openBin: null, app: '/Applications/Claude.app', bundleId: 'com.anthropic.claudefordesktop', mcpConfig: CLAUDE_DESKTOP_CONFIG },
 ];
+
+// Where the client's app actually lives: the conventional /Applications path, else a
+// Spotlight lookup by bundle id — which finds it ANYWHERE on disk (e.g. an app the user
+// runs straight out of ~/Downloads and never moved). ~50ms, and detection is cached.
+function mdfindApp(bundleId: string): string | null {
+    try {
+        const out = execFileSync('mdfind', [`kMDItemCFBundleIdentifier == '${bundleId}'`], { encoding: 'utf8', timeout: 4000 });
+        return out.split('\n').map(s => s.trim()).find(s => s.endsWith('.app')) || null;
+    } catch { return null; }
+}
+function findAppPath(c: AiClient): string | null {
+    if (c.app && fs.existsSync(c.app)) return c.app;
+    if (c.bundleId && process.platform === 'darwin') return mdfindApp(c.bundleId);
+    return null;
+}
 function clientInstalled(c: AiClient): boolean {
-    return (!!c.bin && onPath(c.bin)) || (!!c.app && process.platform === 'darwin' && fs.existsSync(c.app));
+    return (!!c.bin && onPath(c.bin)) || !!findAppPath(c);
 }
 
 // Is plexus registered in a client's mcpServers config? false = file absent or no entry
@@ -577,10 +592,12 @@ export function startLauncher(open = true) {
                 spawn(spec.openBin, [projectPath], { detached: true, stdio: 'ignore' }).unref();
                 return res.json({ ok: true, opened: spec.label });
             }
-            if (spec?.openBin && spec.app && process.platform === 'darwin' && fs.existsSync(spec.app)) {
+            const appPath = spec?.openBin && process.platform === 'darwin' ? findAppPath(spec) : null;
+            if (appPath) {
                 // editor installed but its shell command isn't — open the bundle directly
-                spawn('open', ['-a', spec.app, projectPath], { detached: true, stdio: 'ignore' }).unref();
-                return res.json({ ok: true, opened: spec.label });
+                // (wherever it lives, incl. ~/Downloads via the Spotlight lookup)
+                spawn('open', ['-a', appPath, projectPath], { detached: true, stdio: 'ignore' }).unref();
+                return res.json({ ok: true, opened: spec!.label });
             }
             if (client === 'folder') { // reveal in Finder / Explorer
                 const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';

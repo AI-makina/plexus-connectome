@@ -14,7 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import http from 'http';
 import { spawn } from 'child_process';
-import { findProjectRoot, projectBoundary, registerProject, patchManifestPorts } from './core/registry';
+import { findProjectRoot, projectBoundary, isProjectBoundary, registerProject, patchManifestPorts } from './core/registry';
 
 // Project resolution — AI-FIRST workflow (no -p needed): register this MCP
 // server ONCE globally (`claude mcp add --scope user plexus -- plexus mcp`)
@@ -43,7 +43,11 @@ function looksLikeOwnProject(dir: string): boolean {
         'build.gradle', 'Gemfile', 'composer.json', 'requirements.txt']
         .some((m) => fs.existsSync(path.join(dir, m)));
 }
-const parentMisresolveRisk = resolvedFromParent && looksLikeOwnProject(CWD);
+// Only warn in the genuinely ambiguous case: CWD isn't inside a git repo at all, so there's
+// no boundary to reason from. A manifest folder INSIDE a repo (e.g. a monorepo package)
+// legitimately shares that repo's brain — don't nag there.
+const cwdInsideGitRepo = isProjectBoundary(projectBoundary(CWD));
+const parentMisresolveRisk = resolvedFromParent && looksLikeOwnProject(CWD) && !cwdInsideGitRepo;
 
 // Auto-start (zero-touch): if the brain exists but its engine isn't running,
 // boot it — the user should never have to remember `plexus serve`.

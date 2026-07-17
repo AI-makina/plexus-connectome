@@ -71,9 +71,109 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .badge.gen{color:var(--jade);border-color:var(--jade)}
   .steps{color:var(--mid);font-size:13px;line-height:1.9}
   .steps b{color:var(--hi)}
+  /* ── Onboarding wizard (first-run) + app-icon splash ── */
+  .wiz{position:fixed;inset:0;background:radial-gradient(120% 90% at 50% 0%, #14161c 0%, #08090B 62%);display:none;align-items:center;justify-content:center;z-index:100;padding:24px}
+  .wiz.show{display:flex}
+  .wiz-card{width:100%;max-width:560px;text-align:center}
+  .wstep{display:none}
+  .wstep.active{display:block;animation:wfade .4s ease}
+  @keyframes wfade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .appicon{width:132px;height:132px;border-radius:29px;cursor:pointer;display:inline-block;
+    box-shadow:0 18px 50px rgba(0,0,0,.6);transition:transform .18s cubic-bezier(.2,.8,.2,1),box-shadow .18s}
+  .appicon:hover{transform:translateY(-4px) scale(1.03);box-shadow:0 26px 64px rgba(0,0,0,.72)}
+  .appicon:active{transform:scale(.97)}
+  .wiz-word{font:600 30px var(--sans);letter-spacing:.02em;margin:22px 0 6px}
+  .wiz-sub{color:var(--mid);font-size:14px}
+  .wiz-hint{color:var(--lo);font:12px var(--mono);letter-spacing:.06em;margin-top:20px;animation:pulse 2.2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
+  .wiz-video{width:100%;max-width:520px;border-radius:14px;border:1px solid var(--line1);box-shadow:0 18px 50px rgba(0,0,0,.5);background:#000;display:block;margin:0 auto}
+  .wiz-h{font:600 22px var(--sans);margin:22px 0 8px}
+  .wiz-p{color:var(--mid);font-size:14px;line-height:1.6;max-width:450px;margin:0 auto 22px}
+  .wiz-actions{display:flex;gap:14px;justify-content:center;align-items:center;margin-top:8px}
+  .wiz-skip{color:var(--lo);font:12px var(--mono);cursor:pointer}
+  .wiz-skip:hover{color:var(--mid)}
+  .clientrow{display:flex;align-items:center;gap:12px;background:var(--ink1);border:1px solid var(--line1);border-radius:9px;padding:12px 15px;margin:8px 0;text-align:left}
+  .clientrow .ci{flex:1;min-width:0}.clientrow .ci b{font-size:14px}
+  .clientrow .c-state{font:10px var(--mono);color:var(--lo);margin-left:8px;text-transform:uppercase;letter-spacing:.06em}
+  .clientrow .ok{color:var(--jade);font-size:16px}
+  .wiz-ok{color:var(--jade);font-size:13px;margin:10px 0;background:rgba(115,201,145,.1);border:1px solid rgba(115,201,145,.3);border-radius:8px;padding:9px 12px}
+  .wiz-manual{font-size:12px;color:var(--mid);text-align:left;margin:10px 0}
+  .wiz-choices{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:20px 0}
+  .wiz-choice{background:var(--ink1);border:1px solid var(--line1);border-radius:10px;padding:20px 18px;cursor:pointer;text-align:left;transition:border-color .15s,transform .15s}
+  .wiz-choice:hover{border-color:var(--azure);transform:translateY(-1px)}
+  .wiz-choice b{display:block;font-size:15px;margin-bottom:5px}
+  .wiz-choice span{color:var(--mid);font-size:12px;line-height:1.5}
+  .powered{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:26px;color:var(--lo);font:11px var(--mono);letter-spacing:.04em}
+  .powered img{height:16px;width:auto;opacity:.85}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;align-items:center;justify-content:center;z-index:90;padding:24px}
+  .modal.show{display:flex}
+  .modal-card{width:100%;max-width:420px;background:var(--ink1);border:1px solid var(--line2);border-radius:12px;padding:22px}
+  .modal-card h3{font-size:16px;margin-bottom:4px}
+  .rm-path{font:11px var(--mono);color:var(--lo);word-break:break-all;margin-bottom:14px}
+  .rm-clients{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+  .rm-clients button{width:100%;text-align:left}
+  .powered-foot{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:56px;padding-top:22px;border-top:1px solid var(--line1);color:var(--lo);font:11px var(--mono);letter-spacing:.04em}
+  .powered-foot img{height:18px;opacity:.8}
 </style>
 </head>
 <body>
+
+<!-- ── ONBOARDING WIZARD (first run) ── -->
+<div class="wiz" id="wizard">
+  <div class="wiz-card">
+    <!-- step 0 · app icon → click to begin -->
+    <div class="wstep active" data-step="0">
+      <img class="appicon" src="/assets/launcher/plexus_icon_2_ultrablack.png" alt="Launch Plexus" onclick="startPresentation()">
+      <div class="wiz-word">Plexus</div>
+      <div class="wiz-sub">The evidence layer for your AI</div>
+      <div class="wiz-hint">click the icon to begin</div>
+      <div class="powered"><img src="/assets/launcher/skyfynd_logo.png" alt="SkyFynd"> Powered by SkyFynd</div>
+    </div>
+    <!-- step 1 · presentation -->
+    <div class="wstep" data-step="1">
+      <video class="wiz-video" id="wiz-vid" src="/assets/launcher/plexus_launch_presentation.mp4" autoplay muted loop playsinline></video>
+      <div class="wiz-h">Give your AI a memory</div>
+      <div class="wiz-p">Plexus builds a connectome brain for every project — so your AI stops hallucinating APIs, stops repeating mistakes, and picks up exactly where it left off.</div>
+      <div class="wiz-actions">
+        <button class="primary" onclick="wizStep(2)">Get started</button>
+        <span class="wiz-skip" onclick="wizFinish(null)">Skip setup →</span>
+      </div>
+    </div>
+    <!-- step 2 · connect your AI (one time) -->
+    <div class="wstep" data-step="2">
+      <div class="wiz-h">Connect Plexus to your AI</div>
+      <div class="wiz-p">One time. Pick the AI tools you use — Plexus works the same in all of them, and every project you make is found automatically.</div>
+      <div id="wiz-clients"></div>
+      <div id="wiz-connect-result"></div>
+      <div class="wiz-actions">
+        <button class="primary" onclick="wizStep(3)">Next</button>
+        <span class="wiz-skip" onclick="wizStep(3)">I'll connect later →</span>
+      </div>
+    </div>
+    <!-- step 3 · first project -->
+    <div class="wstep" data-step="3">
+      <div class="wiz-h">Start your first project</div>
+      <div class="wiz-choices">
+        <div class="wiz-choice" onclick="wizFinish('v-new')"><b>New project</b><span>Start fresh — Plexus builds the brain before the code exists.</span></div>
+        <div class="wiz-choice" onclick="wizFinish('v-connect')"><b>I already have a project</b><span>Point at a folder — Plexus maps it, or opens its brain if it has one.</span></div>
+      </div>
+      <span class="wiz-skip" onclick="wizFinish(null)">Go to dashboard →</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── RESUME WITH AI (per project) ── -->
+<div class="modal" id="resume-modal">
+  <div class="modal-card">
+    <h3>Resume with AI</h3>
+    <div class="rm-path" id="rm-path"></div>
+    <div class="rm-clients" id="rm-clients"></div>
+    <div class="cmd" id="rm-cmd" onclick="copyText(this.textContent,null)"></div>
+    <div class="hint" id="rm-note">Opens this project's folder in your editor — the AI resolves its brain and picks up where you left off.</div>
+    <div style="margin-top:14px;text-align:right"><button class="ghost" onclick="closeResume()">close</button></div>
+  </div>
+</div>
+
 <div class="wrap">
   <header>
     <span class="glyph">⬡</span><h1>PLEXUS</h1><span class="tag">launcher · evidence protocol</span>
@@ -133,6 +233,8 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <button class="primary" id="cx-go" onclick="connectProject()">Connect — map this codebase</button>
     <div id="cx-result"></div>
   </div>
+
+  <footer class="powered-foot"><img src="/assets/launcher/skyfynd_logo.png" alt="SkyFynd"> Powered by SkyFynd</footer>
 </div>
 
 <script>
@@ -158,6 +260,7 @@ async function loadProjects(){
         <div class="ports">api :\${p.api_port} · brain :\${p.ws_port}</div>
         <div class="ports" id="pulse-\${p.api_port}"></div>
       </div>
+      <button onclick="resumeWith('\${esc(p.path)}')" title="open this project in your AI editor — it resumes the brain">Resume with AI</button>
       <button onclick="serveProject('\${esc(p.path)}', \${p.ws_port})">\${p.running?'Open brain':'Start + open'}</button>
       <button class="ghost" title="copy the MCP command for Claude Code" onclick="copyText(\\\`\${esc(p.mcp_command)}\\\`, this)">MCP ⧉</button>
       <button class="ghost" onclick="forget('\${esc(p.path)}')">✕</button>
@@ -255,7 +358,79 @@ async function connectProject(){
   loadProjects();
 }
 
+// ── Onboarding wizard ──
+var CLIENTS = [];
+function checkOnboarding(){
+  fetch('/api/launcher/onboarding').then(function(x){return x.json();}).then(function(r){
+    if(!r.onboarded){ document.getElementById('wizard').classList.add('show'); }
+  }).catch(function(){});
+}
+function wizStep(n){
+  var steps = document.querySelectorAll('.wstep');
+  for(var i=0;i<steps.length;i++){ steps[i].classList.toggle('active', parseInt(steps[i].getAttribute('data-step'),10)===n); }
+  if(n===2) loadWizClients();
+  if(n===1){ var v=document.getElementById('wiz-vid'); if(v){ try{ v.currentTime=0; v.play(); }catch(e){} } }
+}
+function startPresentation(){ wizStep(1); }
+function loadWizClients(){
+  var el = document.getElementById('wiz-clients');
+  el.innerHTML = '<div class="hint">detecting your AI tools…</div>';
+  fetch('/api/launcher/clients').then(function(x){return x.json();}).then(function(r){
+    CLIENTS = r.clients || [];
+    el.innerHTML = CLIENTS.map(function(c){
+      var state = !c.installed ? 'not detected' : (c.connected===true ? 'connected' : (c.connected===false ? 'not connected' : 'installed'));
+      var right = c.connected===true ? '<span class="ok">✓</span>' : '<button onclick="wizConnect(\\''+c.id+'\\',this)">Connect</button>';
+      return '<div class="clientrow"><div class="ci"><b>'+esc(c.label)+'</b><span class="c-state">'+state+'</span></div>'+right+'</div>';
+    }).join('');
+  }).catch(function(){ el.innerHTML='<div class="hint">could not detect AI tools</div>'; });
+}
+function wizConnect(id, btn){
+  btn.disabled=true; btn.textContent='connecting…';
+  fetch('/api/launcher/connect-mcp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client:id})})
+    .then(function(x){return x.json();}).then(function(r){
+      var box = document.getElementById('wiz-connect-result');
+      if(r.ok && r.ran){ btn.textContent='connected ✓'; box.innerHTML='<div class="wiz-ok">✓ Connected. Plexus now works in every project for this AI.</div>'; }
+      else if(r.ok && r.already){ btn.textContent='already connected ✓'; }
+      else if(r.manual){ btn.disabled=false; btn.textContent='Connect'; box.innerHTML='<div class="wiz-manual">Add this to '+esc(id)+' MCP config, then reopen it:<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(r.config_json||r.command)+'</div></div>'; }
+      else { btn.disabled=false; btn.textContent='Connect'; box.innerHTML='<div class="wiz-manual">Run this in a terminal:<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(r.command)+'</div>'+(r.error?'<div class="hint">'+esc(r.error)+'</div>':'')+'</div>'; }
+    }).catch(function(){ btn.disabled=false; btn.textContent='Connect'; });
+}
+function wizFinish(view){
+  fetch('/api/launcher/onboarding/complete',{method:'POST'}).catch(function(){});
+  document.getElementById('wizard').classList.remove('show');
+  show(view || 'v-home');
+}
+
+// ── Resume with AI (per project) ──
+var RESUME_PATH = '';
+function resumeWith(pathStr){
+  RESUME_PATH = pathStr;
+  document.getElementById('rm-path').textContent = pathStr;
+  document.getElementById('rm-cmd').textContent = 'cd "'+pathStr+'"';
+  document.getElementById('rm-note').textContent = "Opens this project's folder in your editor — the AI resolves its brain and picks up where you left off.";
+  document.getElementById('resume-modal').classList.add('show');
+  var el = document.getElementById('rm-clients');
+  el.innerHTML = '<div class="hint">detecting editors…</div>';
+  fetch('/api/launcher/clients').then(function(x){return x.json();}).then(function(r){
+    var installed = (r.clients||[]).filter(function(c){return c.installed;});
+    var rows = installed.map(function(c){ return '<button onclick="openIn(\\''+c.id+'\\',this)">Open in '+esc(c.label)+'</button>'; }).join('');
+    el.innerHTML = (rows || '<div class="hint">No editors detected on PATH — use the command below.</div>') + '<button onclick="openIn(\\'folder\\',this)">Open folder</button>';
+  }).catch(function(){ el.innerHTML='<div class="hint">detection failed — use the command below.</div>'; });
+}
+function openIn(client, btn){
+  btn.disabled=true; var orig=btn.textContent; btn.textContent='opening…';
+  fetch('/api/launcher/open-editor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:RESUME_PATH,client:client})})
+    .then(function(x){return x.json();}).then(function(r){
+      btn.disabled=false;
+      if(r.command) document.getElementById('rm-cmd').textContent=r.command;
+      if(r.note) document.getElementById('rm-note').textContent=r.note;
+      btn.textContent = r.ok ? 'opened ✓' : orig;
+    }).catch(function(){ btn.disabled=false; btn.textContent=orig; });
+}
+function closeResume(){ document.getElementById('resume-modal').classList.remove('show'); }
+
 loadProjects();
+checkOnboarding();
 </script>
 </body>
 </html>`;

@@ -92,6 +92,28 @@ function readConnectomePending(projectPath: string): any | null {
     try { return JSON.parse(fs.readFileSync(path.join(projectPath, 'plexus-integration', 'pending-update.json'), 'utf8')); } catch { return null; }
 }
 
+// ── User prefs (~/.plexus/prefs.json): first-run onboarding state, last-used dir ──
+const PREFS_FILE = path.join(os.homedir(), '.plexus', 'prefs.json');
+function loadPrefs(): any { try { return JSON.parse(fs.readFileSync(PREFS_FILE, 'utf8')); } catch { return {}; } }
+function savePrefs(p: any): void {
+    try { fs.mkdirSync(path.dirname(PREFS_FILE), { recursive: true }); fs.writeFileSync(PREFS_FILE, JSON.stringify(p, null, 2)); } catch { /* best-effort */ }
+}
+
+// Is a command on PATH? (detect installed AI clients / editors)
+function onPath(cmd: string): boolean {
+    try { return !!execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { encoding: 'utf8' }).split('\n')[0].trim(); }
+    catch { return false; }
+}
+
+// AI clients Plexus can help connect / open a project in. openBin = its CLI to open a
+// folder (null = terminal tool, no folder CLI). Only Claude Code is introspectable for
+// whether Plexus is already registered.
+const AI_CLIENTS = [
+    { id: 'claude', label: 'Claude Code', bin: 'claude', openBin: null as string | null },
+    { id: 'code', label: 'VS Code', bin: 'code', openBin: 'code' as string | null },
+    { id: 'cursor', label: 'Cursor', bin: 'cursor', openBin: 'cursor' as string | null },
+];
+
 // ─── Server ───────────────────────────────────────────────────────────────────
 
 export function startLauncher(open = true) {
@@ -112,6 +134,10 @@ export function startLauncher(open = true) {
         next();
     });
 
+    // Brand assets (app icon, wordmark, presentation video, SkyFynd mark) for the
+    // onboarding wizard + footer. Lives at repo-root assets/ (dist is one level down).
+    app.use('/assets', express.static(path.join(__dirname, '..', 'assets')));
+
     app.get('/', (_req, res) => {
         res.set('Content-Type', 'text/html').send(LAUNCHER_HTML);
     });
@@ -130,7 +156,7 @@ export function startLauncher(open = true) {
         }
         res.json({
             projects: out,
-            default_base: path.join(os.homedir(), 'Desktop', 'Codes', 'Apps'),
+            default_base: loadPrefs().lastBase || path.join(os.homedir(), 'PlexusProjects'),
             // The AI-first path: register ONCE (user scope, no project path) —
             // the plug resolves the brain from wherever a session is opened,
             // and init_project lets the AI create brains itself.
@@ -313,8 +339,9 @@ export function startLauncher(open = true) {
             if (!name || !/^[a-zA-Z0-9][a-zA-Z0-9-_ ]*$/.test(name)) {
                 return res.status(400).json({ error: 'project name must start alphanumeric' });
             }
-            const base = path.resolve(base_dir || path.join(os.homedir(), 'Desktop', 'Codes', 'Apps'));
+            const base = path.resolve(base_dir || path.join(os.homedir(), 'PlexusProjects'));
             const projectPath = path.join(base, name.trim().replace(/\s+/g, '-'));
+            savePrefs({ ...loadPrefs(), lastBase: base }); // remember for the next project
             if (fs.existsSync(projectPath)) {
                 return res.status(400).json({ error: `${projectPath} already exists — use Connect Existing instead` });
             }
@@ -446,6 +473,81 @@ export function startLauncher(open = true) {
         reg.projects = reg.projects.filter(p => p.path !== projectPath);
         saveRegistry(reg);
         res.json({ success: true, note: 'removed from the launcher registry only — nothing on disk was touched' });
+    });
+
+    // ── Onboarding (first-run wizard) ──
+    app.get('/api/launcher/onboarding', (_req, res) => {
+        res.json({ onboarded: !!loadPrefs().onboarded });
+    });
+    app.post('/api/launcher/onboarding/complete', (_req, res) => {
+        const p = loadPrefs(); p.onboarded = true; savePrefs(p);
+        res.json({ ok: true });
+    });
+
+    // ── AI clients: which are installed + (Claude Code only) is Plexus already connected ──
+    app.get('/api/launcher/clients', (_req, res) => {
+        let claudeConnected: boolean | undefined;
+        if (onPath('claude')) {
+            try { claudeConnected = /plexus/i.test(execFileSync('claude', ['mcp', 'list'], { encoding: 'utf8', timeout: 8000 })); }
+            catch { claudeConnected = undefined; }
+        }
+        const clients = AI_CLIENTS.map(c => ({
+            id: c.id, label: c.label,
+            installed: onPath(c.bin),
+            can_open_folder: !!c.openBin,
+            connected: c.id === 'claude' ? claudeConnected : undefined,
+        }));
+        res.json({ clients, global_mcp: `claude mcp add --scope user plexus -- node "${CLI}" mcp` });
+    });
+
+    // ── Connect Plexus to an AI client (one-time). Claude Code = run it for the user;
+    // other clients = hand back the config/command to paste. User-initiated only. ──
+    app.post('/api/launcher/connect-mcp', (req, res) => {
+        const client = String(req.body?.client || 'claude');
+        const globalCmd = `claude mcp add --scope user plexus -- node "${CLI}" mcp`;
+        if (client === 'claude') {
+            try {
+                const out = execFileSync('claude', ['mcp', 'add', '--scope', 'user', 'plexus', '--', process.execPath, CLI, 'mcp'], { encoding: 'utf8', timeout: 15000 });
+                return res.json({ ok: true, ran: true, output: String(out).trim(), command: globalCmd });
+            } catch (err: any) {
+                const msg = String(err?.stderr || err?.message || err);
+                const already = /already (exists|configured|added)/i.test(msg);
+                return res.json({ ok: already, ran: false, already, error: already ? undefined : msg, command: globalCmd });
+            }
+        }
+        // VS Code / Cursor / other MCP client: give them the server config to paste.
+        res.json({
+            ok: false, ran: false, manual: true, command: globalCmd,
+            config_json: JSON.stringify({ mcpServers: { plexus: { command: process.execPath, args: [CLI, 'mcp'] } } }, null, 2),
+            note: `Add Plexus to ${client}'s MCP config, then reopen it.`,
+        });
+    });
+
+    // ── Resume: open a project folder in an editor, or hand back a `cd` command ──
+    app.post('/api/launcher/open-editor', (req, res) => {
+        const projectPath = path.resolve(String(req.body?.path || ''));
+        const client = String(req.body?.client || '');
+        if (!fs.existsSync(projectPath)) return res.status(404).json({ error: 'folder not found' });
+        const resumeCmd = `cd "${projectPath}"`;
+        const spec = AI_CLIENTS.find(c => c.id === client);
+        try {
+            if (spec?.openBin && onPath(spec.openBin)) { // VS Code / Cursor — open the folder
+                spawn(spec.openBin, [projectPath], { detached: true, stdio: 'ignore' }).unref();
+                return res.json({ ok: true, opened: spec.label });
+            }
+            if (client === 'folder') { // reveal in Finder / Explorer
+                const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+                spawn(opener, [projectPath], { detached: true, stdio: 'ignore' }).unref();
+                return res.json({ ok: true, opened: 'folder' });
+            }
+            if (client === 'claude' && process.platform === 'darwin') { // open Terminal at the folder
+                spawn('open', ['-a', 'Terminal', projectPath], { detached: true, stdio: 'ignore' }).unref();
+                return res.json({ ok: true, opened: 'Terminal', command: `${resumeCmd} && claude`, note: 'Terminal opened here — run `claude` to resume.' });
+            }
+        } catch (err: any) {
+            return res.json({ ok: false, error: err.message, command: resumeCmd });
+        }
+        res.json({ ok: false, terminal: true, command: resumeCmd, note: 'Open a terminal here, then start your AI.' });
     });
 
     app.listen(LAUNCHER_PORT, '127.0.0.1', () => {

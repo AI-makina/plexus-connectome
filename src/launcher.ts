@@ -589,7 +589,10 @@ export function startLauncher(open = true) {
 
     // ── Onboarding (first-run wizard) ──
     app.get('/api/launcher/onboarding', (_req, res) => {
-        res.json({ onboarded: !!loadPrefs().onboarded });
+        const p = loadPrefs();
+        // always_intro: dev/demo pref — replay the full wizard on every launch.
+        // Real users never have it; their wizard shows once.
+        res.json({ onboarded: !!p.onboarded, always_intro: !!p.always_intro });
     });
     app.post('/api/launcher/onboarding/complete', (_req, res) => {
         const p = loadPrefs(); p.onboarded = true; savePrefs(p);

@@ -396,8 +396,10 @@ async function connectProject(){
 // ── Onboarding wizard ──
 var CLIENTS = [];
 function checkOnboarding(){
+  if(new URLSearchParams(location.search).has('intro')){ replayIntro(); return; } // ?intro forces the wizard
   fetch('/api/launcher/onboarding').then(function(x){return x.json();}).then(function(r){
-    if(!r.onboarded){ document.getElementById('wizard').classList.add('show'); }
+    // always_intro = dev/demo pref (replay every launch); real users see the wizard once.
+    if(!r.onboarded || r.always_intro){ document.getElementById('wizard').classList.add('show'); }
   }).catch(function(){});
 }
 function wizStep(n){

@@ -431,6 +431,7 @@ export function startLauncher(open = true) {
             res.json({
                 path: target,
                 parent: path.dirname(target),
+                home: os.homedir(),
                 dirs: entries.slice(0, 200),
                 has_git: fs.existsSync(path.join(target, '.git')),
                 has_plexus: fs.existsSync(path.join(target, 'plexus-integration')),
@@ -438,6 +439,30 @@ export function startLauncher(open = true) {
         } catch (err: any) {
             res.status(400).json({ error: err.message });
         }
+    });
+
+    // Native folder picker (macOS): the same system dialog every Mac app uses —
+    // attached to the frontmost app so it appears over the browser. Async so the
+    // launcher stays responsive while the dialog is open. Non-mac / failure →
+    // client falls back to the in-page picker modal.
+    app.post('/api/launcher/pick-folder', (req, res) => {
+        if (process.platform !== 'darwin') return res.json({ unsupported: true });
+        const startRaw = String(req.body?.start || '');
+        const start = (startRaw && fs.existsSync(startRaw)) ? startRaw : os.homedir();
+        const prompt = String(req.body?.prompt || 'Choose a folder').replace(/[\r\n"\\]/g, '').slice(0, 80);
+        const script = [
+            'tell application (path to frontmost application as text)',
+            '\tactivate',
+            `\tset _f to choose folder with prompt "${prompt}" default location POSIX file "${start.replace(/["\\]/g, '')}"`,
+            'end tell',
+            'POSIX path of _f',
+        ].join('\n');
+        execFile('osascript', ['-e', script], { encoding: 'utf8', timeout: 180000 }, (err, stdout, stderr) => {
+            if (!err) return res.json({ path: String(stdout).trim().replace(/\/$/, '') });
+            const msg = String(stderr || err.message || '');
+            if ((err as any).killed || /-128|cancel/i.test(msg)) return res.json({ cancelled: true });
+            res.json({ unsupported: true, error: msg.slice(0, 200) });
+        });
     });
 
     // NEW PROJECT: folder + git + init + ports + the GENESIS BRIEF.

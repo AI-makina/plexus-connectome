@@ -64,9 +64,28 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .bar{display:flex;gap:2px;height:10px;border-radius:3px;overflow:hidden;margin:10px 0}
   .bar div{min-width:2px}
   .status{font:12px var(--mono);color:var(--gold);margin:14px 0;min-height:18px}
-  .fsrow{font:12px var(--mono);color:var(--mid);padding:5px 10px;border-radius:5px;cursor:pointer;display:flex;gap:8px}
-  .fsrow:hover{background:var(--ink2);color:var(--hi)}
-  .fsbox{background:var(--ink1);border:1px solid var(--line1);border-radius:8px;max-height:230px;overflow:auto;padding:8px;margin-top:8px}
+  /* ── Folder picker (fallback modal — macOS gets the native dialog) ── */
+  .picker{width:100%;max-width:560px;background:var(--ink1);border:1px solid var(--line2);border-radius:12px;display:flex;flex-direction:column;max-height:72vh;box-shadow:0 24px 70px rgba(0,0,0,.55)}
+  .pk-head{padding:14px 16px 10px;border-bottom:1px solid var(--line1)}
+  .pk-title{font:600 13px var(--sans);margin-bottom:8px}
+  .crumbs{display:flex;flex-wrap:wrap;gap:2px;align-items:center;font:11px var(--mono)}
+  .crumb{color:var(--azure);cursor:pointer;padding:2px 5px;border-radius:4px}
+  .crumb:hover{background:var(--ink2)}
+  .crumb.cur{color:var(--hi);cursor:default}
+  .crumb.cur:hover{background:transparent}
+  .crumb-sep{color:var(--ghost);padding:0 1px}
+  .places{display:flex;gap:6px;padding:9px 16px;border-bottom:1px solid var(--line1);flex-wrap:wrap}
+  .place{font:11px var(--sans);color:var(--mid);background:var(--ink2);border:1px solid var(--line1);border-radius:14px;padding:3px 11px;cursor:pointer}
+  .place:hover{color:var(--hi);border-color:var(--slate)}
+  .pk-filter{margin:10px 16px 4px}
+  .pk-filter input{width:100%;background:var(--ink0);border:1px solid var(--line1);border-radius:6px;color:var(--hi);padding:6px 10px;font:12px var(--sans)}
+  .pk-filter input:focus{outline:none;border-color:var(--azure)}
+  .pk-list{flex:1;overflow:auto;padding:6px 8px;min-height:180px}
+  .pk-row{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:6px;cursor:pointer;font:13px var(--sans);color:var(--mid)}
+  .pk-row:hover{background:var(--ink2);color:var(--hi)}
+  .pk-empty{color:var(--ghost);font-size:12px;padding:16px}
+  .pk-foot{display:flex;align-items:center;gap:10px;padding:12px 16px;border-top:1px solid var(--line1)}
+  .pk-path{flex:1;font:10.5px var(--mono);color:var(--lo);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .badge{font:9px var(--mono);letter-spacing:.08em;padding:2px 7px;border-radius:9px;border:1px solid var(--line2);color:var(--mid)}
   .badge.gen{color:var(--jade);border-color:var(--jade)}
   .steps{color:var(--mid);font-size:13px;line-height:1.9}
@@ -188,6 +207,25 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   </div>
 </div>
 
+<!-- ── FOLDER PICKER (fallback modal — macOS uses the native dialog) ── -->
+<div class="modal" id="picker-modal">
+  <div class="picker">
+    <div class="pk-head">
+      <div class="pk-title" id="pk-title">Choose a folder</div>
+      <div class="crumbs" id="pk-crumbs"></div>
+      <div class="hint" id="pk-hint" style="margin-top:6px"></div>
+    </div>
+    <div class="places" id="pk-places"></div>
+    <div class="pk-filter"><input id="pk-filter" placeholder="filter folders…" oninput="renderPickerList()"></div>
+    <div class="pk-list" id="pk-list"></div>
+    <div class="pk-foot">
+      <span class="pk-path" id="pk-path"></span>
+      <button class="ghost" onclick="closePicker()">Cancel</button>
+      <button class="primary" onclick="choosePicker()">Choose this folder</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── RESUME WITH AI (per project) ── -->
 <div class="modal" id="resume-modal">
   <div class="modal-card">
@@ -241,9 +279,8 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <p class="hint">Describe it in your own words — your AI and the librarian turn this into the brain. You never file anything into lobes.</p>
     <div class="row" style="margin-top:18px">
       <div class="grow"><label>Project name</label><input type="text" id="np-name" placeholder="my-app"></div>
-      <div class="grow"><label>Create inside</label><div class="row"><input type="text" id="np-base" class="grow"><button onclick="browse(document.getElementById('np-base').value,'np-base','np-fsbox')">browse</button></div></div>
+      <div class="grow"><label>Create inside</label><div class="row"><input type="text" id="np-base" class="grow"><button onclick="pickFolder('np-base','Choose where to create your project')">browse…</button></div></div>
     </div>
-    <div class="fsbox" id="np-fsbox" style="display:none"></div>
     <label>What are you imagining?</label>
     <textarea id="np-desc" style="min-height:130px;font-family:var(--sans);font-size:14px" placeholder="Write it like you'd tell a friend. What it does, who it's for, what the user sees, what it talks to, anything that should happen on its own…"></textarea>
     <label>What must never go wrong? <span style="color:var(--lo);text-transform:none;letter-spacing:0">(optional — these become standing guards your AI is warned about forever)</span></label>
@@ -259,8 +296,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <h2 style="margin-bottom:4px">Connect an existing project</h2>
     <p class="hint">Browse to the app's root folder (where its package.json / source lives).</p>
     <label>Folder</label>
-    <div class="row"><input type="text" id="cx-path" class="grow"><button onclick="browse(document.getElementById('cx-path').value)">browse</button></div>
-    <div class="fsbox" id="fsbox" style="display:none"></div>
+    <div class="row"><input type="text" id="cx-path" class="grow"><button onclick="pickFolder('cx-path','Choose your project folder')">browse…</button></div>
     <div class="status" id="cx-status"></div>
     <button class="primary" id="cx-go" onclick="connectProject()">Connect — map this codebase</button>
     <div id="cx-result"></div>
@@ -353,23 +389,65 @@ async function createProject(){
   loadProjects();
 }
 
-// folder browser — shared by Connect Existing (cx-path/fsbox, the defaults) and the
-// New Project "Create inside" field (np-base/np-fsbox). Navigating into a folder sets
-// the input; "✓ use this folder" closes the box.
-function closeFsbox(id){ var b=document.getElementById(id); if(b) b.style.display='none'; }
-async function browse(p, inputId, boxId){
-  inputId = inputId || 'cx-path'; boxId = boxId || 'fsbox';
-  const box = document.getElementById(boxId);
-  const r = await fetch('/api/launcher/fs?path='+encodeURIComponent(p||'')).then(x=>x.json());
-  if(r.error){box.style.display='block';box.innerHTML='<div class="hint">'+esc(r.error)+'</div>';return;}
-  document.getElementById(inputId).value = r.path;
-  box.style.display='block';
-  box.innerHTML =
-    '<div class="fsrow" onclick="closeFsbox(\\''+boxId+'\\')">✓ use this folder</div>' +
-    '<div class="fsrow" onclick="browse(\\''+esc(r.parent)+'\\',\\''+inputId+'\\',\\''+boxId+'\\')">↑ ..</div>' +
-    r.dirs.map(d=>'<div class="fsrow" onclick="browse(\\''+esc(r.path+'/'+d)+'\\',\\''+inputId+'\\',\\''+boxId+'\\')">▸ '+esc(d)+'</div>').join('') +
-    (r.has_plexus && boxId==='fsbox' ? '<div class="hint" style="padding:6px 10px">⬡ this folder already has a Plexus brain — connecting will refresh it</div>':'');
+// ── Folder picking: native macOS dialog first; the in-page modal as fallback ──
+async function pickFolder(inputId, title){
+  var inp = document.getElementById(inputId);
+  var r = await fetch('/api/launcher/pick-folder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({start:inp.value, prompt:title})})
+    .then(function(x){return x.json();}).catch(function(){return {unsupported:true};});
+  if(r.path){ inp.value = r.path; return; }
+  if(r.cancelled) return;
+  openPicker(inputId, title); // fallback modal
 }
+
+var PK = { input:null, path:'', dirs:[], hasPlexus:false, home:'' };
+var FOLD = '<svg width="14" height="12" viewBox="0 0 14 12" fill="none" style="flex:none"><path d="M1 2.5C1 1.7 1.7 1 2.5 1h3l1.2 1.5H11.5c.8 0 1.5.7 1.5 1.5v5.5c0 .8-.7 1.5-1.5 1.5h-9C1.7 11 1 10.3 1 9.5v-7z" fill="#E3B341" opacity="0.8"/></svg>';
+function openPicker(inputId, title){
+  PK.input = inputId;
+  document.getElementById('pk-title').textContent = title || 'Choose a folder';
+  document.getElementById('pk-filter').value = '';
+  document.getElementById('picker-modal').classList.add('show');
+  navPicker(document.getElementById(inputId).value || '');
+}
+function closePicker(){ document.getElementById('picker-modal').classList.remove('show'); }
+function choosePicker(){ if(PK.input && PK.path) document.getElementById(PK.input).value = PK.path; closePicker(); }
+async function navPicker(p){
+  var r = await fetch('/api/launcher/fs?path='+encodeURIComponent(p||'')).then(function(x){return x.json();}).catch(function(){return {error:'unreachable'};});
+  if(r.error){ document.getElementById('pk-list').innerHTML = '<div class="pk-empty">'+esc(r.error)+'</div>'; return; }
+  PK.path = r.path; PK.dirs = r.dirs || []; PK.hasPlexus = !!r.has_plexus; PK.home = r.home || PK.home;
+  document.getElementById('pk-path').textContent = r.path;
+  document.getElementById('pk-hint').textContent = (PK.hasPlexus && PK.input==='cx-path') ? '⬡ this folder already has a Plexus brain — connecting will refresh it' : '';
+  document.getElementById('pk-filter').value = '';
+  renderCrumbs(); renderPlaces(); renderPickerList();
+}
+function renderCrumbs(){
+  var parts = PK.path.split('/').filter(Boolean);
+  var html = '<span class="crumb" data-p="/" onclick="navPicker(this.getAttribute(\\'data-p\\'))">/</span>';
+  var acc = '';
+  parts.forEach(function(seg, i){
+    acc += '/' + seg;
+    var last = i === parts.length - 1;
+    html += '<span class="crumb-sep">›</span>'
+      + '<span class="crumb'+(last?' cur':'')+'" data-p="'+esc(acc)+'"'+(last?'':' onclick="navPicker(this.getAttribute(\\'data-p\\'))"')+'>'+esc(seg)+'</span>';
+  });
+  document.getElementById('pk-crumbs').innerHTML = html;
+}
+function renderPlaces(){
+  if(!PK.home) { document.getElementById('pk-places').innerHTML=''; return; }
+  var places = [['Home', PK.home], ['Desktop', PK.home+'/Desktop'], ['Documents', PK.home+'/Documents'], ['PlexusProjects', PK.home+'/PlexusProjects']];
+  document.getElementById('pk-places').innerHTML = places.map(function(pl){
+    return '<span class="place" data-p="'+esc(pl[1])+'" onclick="navPicker(this.getAttribute(\\'data-p\\'))">'+pl[0]+'</span>';
+  }).join('');
+}
+function renderPickerList(){
+  var f = (document.getElementById('pk-filter').value || '').toLowerCase();
+  var list = PK.dirs.filter(function(d){ return d.toLowerCase().indexOf(f) >= 0; });
+  document.getElementById('pk-list').innerHTML = list.length
+    ? list.map(function(d){ return '<div class="pk-row" data-p="'+esc(PK.path+'/'+d)+'" onclick="navPicker(this.getAttribute(\\'data-p\\'))">'+FOLD+'<span>'+esc(d)+'</span></div>'; }).join('')
+    : '<div class="pk-empty">no folders here'+(f?' matching “'+esc(f)+'”':'')+' — you can still choose this folder below</div>';
+}
+document.addEventListener('keydown', function(e){
+  if(e.key==='Escape' && document.getElementById('picker-modal').classList.contains('show')) closePicker();
+});
 async function connectProject(){
   const p = document.getElementById('cx-path').value.trim();
   const status = document.getElementById('cx-status');

@@ -162,6 +162,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
       <div class="wiz-p">One time. After this, any project you open in a connected AI finds its brain automatically — nothing to point, nothing to pin.</div>
       <div style="text-align:left">
         <div class="opt-label">Option 1 · Connect an app</div>
+        <div style="text-align:center;margin:6px 0 4px"><button class="primary" id="wiz-search" onclick="wizSearch(this)">⌕ Search this Mac for AI apps</button></div>
         <div id="wiz-clients"></div>
         <div class="opt-note">Every model a connected app runs — Claude, Gemini, GPT, local — automatically uses the brain of whichever Plexus project you open there.</div>
         <div class="opt-label">Option 2 · Use your terminal instead</div>
@@ -212,7 +213,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
       <p class="hint" id="conn-sub" style="margin:2px 0 6px"></p>
       <div id="home-clients"></div>
       <div id="home-connect-result"></div>
-      <p class="hint" style="margin-top:8px">Prefer a terminal? <span class="mono" style="cursor:pointer;color:var(--azure)" onclick="copyGlobal(this)">copy the one-time command ⧉</span></p>
+      <p class="hint" style="margin-top:8px"><span class="mono" id="conn-manage" style="cursor:pointer;color:var(--azure)" onclick="toggleConnections(this)">manage connections ▾</span> &nbsp;·&nbsp; Prefer a terminal? <span class="mono" style="cursor:pointer;color:var(--azure)" onclick="copyGlobal(this)">copy the one-time command ⧉</span></p>
     </div>
     <div class="cards">
       <div class="card new" onclick="show('v-new')">
@@ -403,7 +404,18 @@ function wizStep(n){
   var v=document.getElementById('wiz-vid');
   if(n===1){ if(v){ try{ v.currentTime=0; v.play(); }catch(e){} } }
   else if(v){ try{ v.pause(); }catch(e){} } // else a hidden video's onended could drag the user back
-  if(n===2) loadWizClients();
+  if(n===2){ // detection is on-request (the Search button) — only prefill the terminal command
+    var g=document.getElementById('wiz-global-cmd');
+    if(g){ if(GLOBAL_MCP) g.textContent=GLOBAL_MCP;
+      else fetch('/api/launcher/clients').then(function(x){return x.json();}).then(function(r){ GLOBAL_MCP=r.global_mcp||''; if(GLOBAL_MCP) g.textContent=GLOBAL_MCP; }).catch(function(){}); }
+  }
+}
+function wizSearch(btn){
+  btn.disabled=true; btn.textContent='searching…';
+  renderClients(document.getElementById('wiz-clients'), 'wiz-connect-result').then(function(){
+    btn.parentElement.style.display='none';
+    var g=document.getElementById('wiz-global-cmd'); if(g && GLOBAL_MCP) g.textContent=GLOBAL_MCP;
+  }).catch(function(){ btn.disabled=false; btn.textContent='⌕ Search this Mac for AI apps'; });
 }
 function startPresentation(){ wizStep(1); }
 // advance only if the presentation is actually on screen (guards stray ended events)
@@ -466,22 +478,32 @@ function connectedNote(){
   return '<div class="hint" style="margin:4px 0 10px">Your AI is not connected yet — do the one-time connect at the top of this page first (or copy its terminal command).</div>';
 }
 function loadConnections(){
+  // Status line only — the client rows appear on request via "manage connections".
   var head = document.getElementById('conn-head'), sub = document.getElementById('conn-sub');
-  var listEl = document.getElementById('home-clients');
-  if(!head || !listEl) return;
-  renderClients(listEl, 'home-connect-result').then(function(inst){
-    var conn = (inst||[]).filter(function(c){ return c.connected===true; });
+  if(!head) return;
+  fetch('/api/launcher/clients').then(function(x){return x.json();}).then(function(r){
+    GLOBAL_MCP = r.global_mcp || GLOBAL_MCP;
+    var inst = (r.clients||[]).filter(function(c){ return c.installed; });
+    INSTALLED = inst;
+    var conn = inst.filter(function(c){ return c.connected===true; });
     if(conn.length){
       head.textContent = '⬡ Your AI is connected — ' + conn.map(function(c){return c.label;}).join(', ');
       sub.textContent = 'Open your AI in any project folder and just talk — Plexus finds the right brain automatically. The cards below are optional manual paths; this page is your dashboard.';
-    } else if(inst && inst.length){
+    } else if(inst.length){
       head.textContent = '⬡ Connect your AI — one time';
-      sub.textContent = 'Pick the AI tools you use. After this, every project works automatically — no per-project setup.';
+      sub.textContent = 'Use manage connections below to link the AI tools you use. After that, every project works automatically.';
     } else {
       head.textContent = '⬡ Connect your AI';
-      sub.textContent = '';
+      sub.textContent = 'No AI tools detected yet — manage connections has the universal command.';
     }
   }).catch(function(){ head.textContent='⬡ Your AI connections'; });
+}
+function toggleConnections(el){
+  var list = document.getElementById('home-clients');
+  if(list.innerHTML){ list.innerHTML=''; document.getElementById('home-connect-result').innerHTML=''; el.textContent='manage connections ▾'; return; }
+  el.textContent='searching…';
+  renderClients(list, 'home-connect-result').then(function(){ el.textContent='hide ▴'; })
+    .catch(function(){ el.textContent='manage connections ▾'; });
 }
 function connectClient(id, btn){
   var box = document.getElementById(btn.getAttribute('data-result'));
@@ -489,7 +511,12 @@ function connectClient(id, btn){
   fetch('/api/launcher/connect-mcp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client:id})})
     .then(function(x){return x.json();}).then(function(r){
       if(r.ok && r.ran){ btn.textContent='connected ✓'; if(box) box.innerHTML='<div class="wiz-ok">✓ Connected. Plexus now works in every project for this AI.</div>';
-        setTimeout(function(){ loadConnections(); if(document.getElementById('wizard').classList.contains('show')) loadWizClients(); }, 600); }
+        setTimeout(function(){
+          loadConnections();
+          // refresh whichever row-lists are actually open (never populate unrequested)
+          var wl=document.getElementById('wiz-clients'); if(document.getElementById('wizard').classList.contains('show') && wl && wl.innerHTML) loadWizClients();
+          var hl=document.getElementById('home-clients'); if(hl && hl.innerHTML) renderClients(hl,'home-connect-result');
+        }, 600); }
       else if(r.ok && r.already){ btn.textContent='already connected ✓'; }
       else if(r.manual){ btn.disabled=false; btn.textContent='Connect';
         var where = r.config_path ? 'Merge this into <span class="mono" style="color:var(--ice)">'+esc(r.config_path)+'</span> — then restart it:' : 'Add this to '+esc(id)+' MCP config, then reopen it:';

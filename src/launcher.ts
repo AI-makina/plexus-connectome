@@ -646,6 +646,14 @@ export function startLauncher(open = true) {
 
     app.listen(LAUNCHER_PORT, '127.0.0.1', () => {
         console.log(`⬡ Plexus Launcher → http://localhost:${LAUNCHER_PORT}`);
+        // First-launch home for new projects: make the default base REAL from minute one
+        // (visible in Finder), like any app-store app on first run. Skipped once the user
+        // has chosen their own base — deleting it then stays deleted.
+        try {
+            const defBase = path.join(os.homedir(), 'PlexusProjects');
+            const lastBase = loadPrefs().lastBase;
+            if (!lastBase || lastBase === defBase) fs.mkdirSync(defBase, { recursive: true });
+        } catch { /* best-effort */ }
         setTimeout(() => { detectClients().catch(() => { /* prewarm only */ }); }, 300);
         if (open && !process.env.PLEXUS_NO_OPEN) {
             try { require('open')(`http://localhost:${LAUNCHER_PORT}`); } catch { /* headless */ }

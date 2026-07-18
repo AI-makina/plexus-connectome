@@ -199,9 +199,11 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   <!-- HOME -->
   <div class="view active" id="v-home">
     <div class="result" style="margin:0 0 18px;border-color:#2A3550">
-      <h4 style="color:var(--azure)">⬡ The plug-and-play way: register once, then just talk to your AI</h4>
-      <p class="hint" style="margin:2px 0 6px">Paste this in a terminal one time. After that, open Claude Code anywhere and say what you want to build — the AI creates the brain, seeds the plan from your own words, and starts every reply with <span class="mono" style="color:var(--ice)">⬡ plexus active</span> so you know it's engaged. The cards below are optional manual paths; this page is your dashboard.</p>
-      <div class="cmd" id="global-mcp" onclick="copyText(this.textContent,null)">loading…</div>
+      <h4 style="color:var(--azure)" id="conn-head">⬡ Checking your AI connections…</h4>
+      <p class="hint" id="conn-sub" style="margin:2px 0 6px"></p>
+      <div id="home-clients"></div>
+      <div id="home-connect-result"></div>
+      <p class="hint" style="margin-top:8px">Prefer a terminal? <span class="mono" style="cursor:pointer;color:var(--azure)" onclick="copyGlobal(this)">copy the one-time command ⧉</span></p>
     </div>
     <div class="cards">
       <div class="card new" onclick="show('v-new')">
@@ -257,14 +259,14 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
 const REGION_HEX = { frontal_lobe:'#7AA2F7', temporal_lobe:'#E3B341', occipital_lobe:'#E573B7',
   parietal_lobe:'#73C991', cerebellum:'#9D7CD8', brain_stem:'#8B98A9', limbic_system:'#E8795B',
   corpus_callosum:'#C8CFDA' };
-function show(id){document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));document.getElementById(id).classList.add('active');if(id==='v-home')loadProjects();}
+function show(id){document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));document.getElementById(id).classList.add('active');if(id==='v-home'){loadProjects();loadConnections();}}
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
 // home
 async function loadProjects(){
   const r = await fetch('/api/launcher/projects').then(x=>x.json());
   document.getElementById('np-base').value ||= r.default_base;
-  if(r.global_mcp) document.getElementById('global-mcp').textContent = r.global_mcp;
+  if(r.global_mcp) GLOBAL_MCP = r.global_mcp;
   const el = document.getElementById('projects');
   if(!r.projects.length){el.innerHTML='<p class="hint">No brains yet — talk to your AI (after the one-time command above), or use the cards.</p>';return;}
   el.innerHTML = r.projects.map(p=>\`
@@ -278,7 +280,7 @@ async function loadProjects(){
       </div>
       <button onclick="resumeWith('\${esc(p.path)}')" title="open this project in your AI editor — it resumes the brain">Resume with AI</button>
       <button onclick="serveProject('\${esc(p.path)}', \${p.ws_port})">\${p.running?'Open brain':'Start + open'}</button>
-      <button class="ghost" title="copy the MCP command for Claude Code" onclick="copyText(\\\`\${esc(p.mcp_command)}\\\`, this)">MCP ⧉</button>
+      <button class="ghost" title="Advanced: copy a command that PINS this one project to its own MCP entry. Not needed — once your AI is connected (top of page), every project is found by its folder." onclick="copyText(\\\`\${esc(p.mcp_command)}\\\`, this)">pin ⧉</button>
       <button class="ghost" onclick="forget('\${esc(p.path)}')">✕</button>
     </div>\`).join('');
   // Reassurance pulse: proof the AI is actually leaning on each brain
@@ -393,35 +395,63 @@ function wizStep(n){
 function startPresentation(){ wizStep(1); }
 // advance only if the presentation is actually on screen (guards stray ended events)
 function vidEnded(){ var s=document.querySelector('.wstep[data-step="1"]'); if(s && s.classList.contains('active')) wizStep(2); }
-function loadWizClients(){
-  var el = document.getElementById('wiz-clients');
-  el.innerHTML = '<div class="hint">detecting your AI tools…</div>';
-  fetch('/api/launcher/clients').then(function(x){return x.json();}).then(function(r){
+// ── ONE source of truth for AI connections — renders the same client rows in the
+// wizard (step 2) AND the dashboard panel, so connecting in either place is the
+// same act and both surfaces always agree. Returns the installed clients.
+var GLOBAL_MCP='';
+function copyGlobal(el){ if(!GLOBAL_MCP) return; navigator.clipboard.writeText(GLOBAL_MCP); var o=el.textContent; el.textContent='copied ✓'; setTimeout(function(){el.textContent=o;},1500); }
+function renderClients(listEl, resultId){
+  listEl.innerHTML = '<div class="hint">detecting your AI tools…</div>';
+  return fetch('/api/launcher/clients').then(function(x){return x.json();}).then(function(r){
+    GLOBAL_MCP = r.global_mcp || '';
     // Only what's actually ON this machine — an uninstalled app is noise, not a choice.
-    CLIENTS = (r.clients || []).filter(function(c){ return c.installed; });
-    if(!CLIENTS.length){
-      el.innerHTML = '<div class="hint">No AI tools detected on this machine. Install one (Claude Code, Antigravity, Cursor…), or paste this into any MCP-capable client:</div>'
-        + '<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(r.global_mcp||'')+'</div>';
-      return;
+    var inst = (r.clients || []).filter(function(c){ return c.installed; });
+    if(!inst.length){
+      listEl.innerHTML = '<div class="hint">No AI tools detected on this machine. Install one (Claude Code, Antigravity, Cursor…), or paste this into any MCP-capable client:</div>'
+        + '<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(GLOBAL_MCP)+'</div>';
+      return inst;
     }
-    el.innerHTML = CLIENTS.map(function(c){
+    listEl.innerHTML = inst.map(function(c){
       var state = c.connected===true ? 'connected' : (c.connected===false ? 'not connected' : 'detected');
-      var right = c.connected===true ? '<span class="ok">✓</span>' : '<button onclick="wizConnect(\\''+c.id+'\\',this)">Connect</button>';
+      var right = c.connected===true ? '<span class="ok">✓</span>' : '<button data-result="'+resultId+'" onclick="connectClient(\\''+c.id+'\\',this)">Connect</button>';
       return '<div class="clientrow"><div class="ci"><b>'+esc(c.label)+'</b><span class="c-state">'+state+'</span>'+(c.hint?'<div class="c-hint">'+esc(c.hint)+'</div>':'')+'</div>'+right+'</div>';
     }).join('');
-  }).catch(function(){ el.innerHTML='<div class="hint">could not detect AI tools</div>'; });
+    return inst;
+  });
 }
-function wizConnect(id, btn){
+function loadWizClients(){
+  renderClients(document.getElementById('wiz-clients'), 'wiz-connect-result').catch(function(){ document.getElementById('wiz-clients').innerHTML='<div class="hint">could not detect AI tools</div>'; });
+}
+function loadConnections(){
+  var head = document.getElementById('conn-head'), sub = document.getElementById('conn-sub');
+  var listEl = document.getElementById('home-clients');
+  if(!head || !listEl) return;
+  renderClients(listEl, 'home-connect-result').then(function(inst){
+    var conn = (inst||[]).filter(function(c){ return c.connected===true; });
+    if(conn.length){
+      head.textContent = '⬡ Your AI is connected — ' + conn.map(function(c){return c.label;}).join(', ');
+      sub.textContent = 'Open your AI in any project folder and just talk — Plexus finds the right brain automatically. The cards below are optional manual paths; this page is your dashboard.';
+    } else if(inst && inst.length){
+      head.textContent = '⬡ Connect your AI — one time';
+      sub.textContent = 'Pick the AI tools you use. After this, every project works automatically — no per-project setup.';
+    } else {
+      head.textContent = '⬡ Connect your AI';
+      sub.textContent = '';
+    }
+  }).catch(function(){ head.textContent='⬡ Your AI connections'; });
+}
+function connectClient(id, btn){
+  var box = document.getElementById(btn.getAttribute('data-result'));
   btn.disabled=true; btn.textContent='connecting…';
   fetch('/api/launcher/connect-mcp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client:id})})
     .then(function(x){return x.json();}).then(function(r){
-      var box = document.getElementById('wiz-connect-result');
-      if(r.ok && r.ran){ btn.textContent='connected ✓'; box.innerHTML='<div class="wiz-ok">✓ Connected. Plexus now works in every project for this AI.</div>'; }
+      if(r.ok && r.ran){ btn.textContent='connected ✓'; if(box) box.innerHTML='<div class="wiz-ok">✓ Connected. Plexus now works in every project for this AI.</div>';
+        setTimeout(function(){ loadConnections(); if(document.getElementById('wizard').classList.contains('show')) loadWizClients(); }, 600); }
       else if(r.ok && r.already){ btn.textContent='already connected ✓'; }
       else if(r.manual){ btn.disabled=false; btn.textContent='Connect';
         var where = r.config_path ? 'Merge this into <span class="mono" style="color:var(--ice)">'+esc(r.config_path)+'</span> — then restart it:' : 'Add this to '+esc(id)+' MCP config, then reopen it:';
-        box.innerHTML='<div class="wiz-manual">'+where+'<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(r.config_json||r.command)+'</div></div>'; }
-      else { btn.disabled=false; btn.textContent='Connect'; box.innerHTML='<div class="wiz-manual">Run this in a terminal:<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(r.command)+'</div>'+(r.error?'<div class="hint">'+esc(r.error)+'</div>':'')+'</div>'; }
+        if(box) box.innerHTML='<div class="wiz-manual">'+where+'<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(r.config_json||r.command)+'</div></div>'; }
+      else { btn.disabled=false; btn.textContent='Connect'; if(box) box.innerHTML='<div class="wiz-manual">Run this in a terminal:<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(r.command)+'</div>'+(r.error?'<div class="hint">'+esc(r.error)+'</div>':'')+'</div>'; }
     }).catch(function(){ btn.disabled=false; btn.textContent='Connect'; });
 }
 function wizFinish(view){
@@ -459,6 +489,7 @@ function openIn(client, btn){
 function closeResume(){ document.getElementById('resume-modal').classList.remove('show'); }
 
 loadProjects();
+loadConnections();
 checkOnboarding();
 </script>
 </body>

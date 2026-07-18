@@ -397,9 +397,15 @@ function loadWizClients(){
   var el = document.getElementById('wiz-clients');
   el.innerHTML = '<div class="hint">detecting your AI tools…</div>';
   fetch('/api/launcher/clients').then(function(x){return x.json();}).then(function(r){
-    CLIENTS = r.clients || [];
+    // Only what's actually ON this machine — an uninstalled app is noise, not a choice.
+    CLIENTS = (r.clients || []).filter(function(c){ return c.installed; });
+    if(!CLIENTS.length){
+      el.innerHTML = '<div class="hint">No AI tools detected on this machine. Install one (Claude Code, Antigravity, Cursor…), or paste this into any MCP-capable client:</div>'
+        + '<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(r.global_mcp||'')+'</div>';
+      return;
+    }
     el.innerHTML = CLIENTS.map(function(c){
-      var state = !c.installed ? 'not detected' : (c.connected===true ? 'connected' : (c.connected===false ? 'not connected' : 'installed'));
+      var state = c.connected===true ? 'connected' : (c.connected===false ? 'not connected' : 'detected');
       var right = c.connected===true ? '<span class="ok">✓</span>' : '<button onclick="wizConnect(\\''+c.id+'\\',this)">Connect</button>';
       return '<div class="clientrow"><div class="ci"><b>'+esc(c.label)+'</b><span class="c-state">'+state+'</span>'+(c.hint?'<div class="c-hint">'+esc(c.hint)+'</div>':'')+'</div>'+right+'</div>';
     }).join('');

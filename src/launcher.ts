@@ -112,6 +112,10 @@ function onPath(cmd: string): boolean {
 interface AiClient { id: string; label: string; bin: string | null; openBin: string | null; app: string | null; bundleId?: string; mcpConfig?: string; hint?: string }
 const ANTIGRAVITY_MCP_CONFIG = path.join(os.homedir(), '.gemini', 'antigravity', 'mcp_config.json');
 const CLAUDE_DESKTOP_CONFIG = path.join(os.homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
+const VSCODE_MCP_CONFIG = path.join(os.homedir(), 'Library', 'Application Support', 'Code', 'User', 'mcp.json');
+const CURSOR_MCP_CONFIG = path.join(os.homedir(), '.cursor', 'mcp.json');
+const CODEX_MCP_CONFIG = path.join(os.homedir(), '.codex', 'config.toml');
+const GEMINI_MCP_CONFIG = path.join(os.homedir(), '.gemini', 'settings.json');
 // hint = who this plug actually serves. The rule users trip on: you connect the AI AGENT,
 // not the window it runs in — a CLI carries its own plug into any IDE's terminal.
 const AI_CLIENTS: AiClient[] = [
@@ -119,10 +123,14 @@ const AI_CLIENTS: AiClient[] = [
         hint: 'The claude CLI — one connect covers every terminal, including inside VS Code or Antigravity.' },
     { id: 'antigravity', label: 'Antigravity', bin: 'antigravity', openBin: 'antigravity', app: '/Applications/Antigravity.app', bundleId: 'com.google.antigravity', mcpConfig: ANTIGRAVITY_MCP_CONFIG,
         hint: 'Antigravity’s built-in agent only. CLIs in its terminal use their own connect.' },
-    { id: 'code', label: 'VS Code', bin: 'code', openBin: 'code', app: '/Applications/Visual Studio Code.app', bundleId: 'com.microsoft.VSCode',
+    { id: 'code', label: 'VS Code', bin: 'code', openBin: 'code', app: '/Applications/Visual Studio Code.app', bundleId: 'com.microsoft.VSCode', mcpConfig: VSCODE_MCP_CONFIG,
         hint: 'VS Code’s built-in AI (Copilot agent mode) only — not needed for Claude Code in its terminal.' },
-    { id: 'cursor', label: 'Cursor', bin: 'cursor', openBin: 'cursor', app: '/Applications/Cursor.app', bundleId: 'com.todesktop.230313mzl4w4u92',
+    { id: 'cursor', label: 'Cursor', bin: 'cursor', openBin: 'cursor', app: '/Applications/Cursor.app', bundleId: 'com.todesktop.230313mzl4w4u92', mcpConfig: CURSOR_MCP_CONFIG,
         hint: 'Cursor’s built-in agent.' },
+    { id: 'codex', label: 'Codex CLI', bin: 'codex', openBin: null, app: null, mcpConfig: CODEX_MCP_CONFIG,
+        hint: 'OpenAI’s codex CLI — one connect covers every terminal it runs in.' },
+    { id: 'gemini', label: 'Gemini CLI', bin: 'gemini', openBin: null, app: null, mcpConfig: GEMINI_MCP_CONFIG,
+        hint: 'Google’s gemini CLI — one connect covers every terminal it runs in.' },
     { id: 'claude-desktop', label: 'Claude Desktop', bin: null, openBin: null, app: '/Applications/Claude.app', bundleId: 'com.anthropic.claudefordesktop', mcpConfig: CLAUDE_DESKTOP_CONFIG,
         hint: 'The Claude chat app.' },
 ];
@@ -147,13 +155,16 @@ function clientInstalled(c: AiClient): boolean {
 
 // Is plexus registered in a client's mcpServers config? false = file absent or no entry
 // (honestly not connected); undefined = file unreadable (unknown).
+// Handles every roster format: JSON with "mcpServers" (Claude Desktop / Cursor / Gemini /
+// Antigravity), JSON with "servers" (VS Code's mcp.json), TOML tables (Codex config.toml).
 function mcpConfigHasPlexus(file: string): boolean | undefined {
     if (!fs.existsSync(file)) return false;
     try {
         const raw = fs.readFileSync(file, 'utf8').trim();
         if (!raw) return false; // created-but-empty config = definitively not registered
+        if (file.endsWith('.toml')) return /^\s*\[mcp_servers\.plexus\]/m.test(raw);
         const j = JSON.parse(raw);
-        return !!(j?.mcpServers && j.mcpServers.plexus);
+        return !!(j?.mcpServers?.plexus || j?.servers?.plexus);
     } catch { return undefined; } // unreadable/nonstandard — unknown, don't claim either way
 }
 
@@ -574,13 +585,25 @@ export function startLauncher(open = true) {
                 return res.json({ ok: already, ran: false, already, error: already ? undefined : msg, command: globalCmd });
             }
         }
-        // Antigravity / Claude Desktop / VS Code / Cursor: hand back the server config to
-        // paste — with the exact file path when the client's config location is known.
+        if (client === 'codex') {
+            // Codex CLI has its own registration command; it writes ~/.codex/config.toml globally.
+            try {
+                execFileSync('codex', ['mcp', 'add', 'plexus', '--', process.execPath, CLI, 'mcp'], { encoding: 'utf8', timeout: 15000 });
+                clientsCache = null;
+                return res.json({ ok: true, ran: true, command: globalCmd });
+            } catch { /* older codex / not on PATH — fall through to the manual TOML below */ }
+        }
+        // Everyone else (and codex fallback): hand back the server config to paste — in THAT
+        // client's format, with the exact file path when its config location is known.
         const spec = AI_CLIENTS.find(c => c.id === client);
+        const server = { command: process.execPath, args: [CLI, 'mcp'] };
+        let snippet = JSON.stringify({ mcpServers: { plexus: server } }, null, 2);
+        if (client === 'code') snippet = JSON.stringify({ servers: { plexus: server } }, null, 2); // VS Code mcp.json uses "servers"
+        if (client === 'codex') snippet = `[mcp_servers.plexus]\ncommand = "${process.execPath}"\nargs = ["${CLI}", "mcp"]`; // TOML
         res.json({
             ok: false, ran: false, manual: true, command: globalCmd,
             config_path: spec?.mcpConfig,
-            config_json: JSON.stringify({ mcpServers: { plexus: { command: process.execPath, args: [CLI, 'mcp'] } } }, null, 2),
+            config_json: snippet,
             note: spec?.mcpConfig
                 ? `Merge this into the file, then restart ${spec.label}.`
                 : `Add Plexus to ${spec?.label || client}'s MCP config, then reopen it.`,

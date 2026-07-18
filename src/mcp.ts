@@ -256,7 +256,28 @@ async function callTool(name: string, args: any): Promise<string> {
                 return `A brain already exists at ${targetPath} — call session_open instead.`;
             }
             const { execFileSync } = require('child_process');
-            const projName = String(args?.name || path.basename(targetPath));
+            let projName = String(args?.name || '').trim();
+            // A brain must NEVER root at a broad folder (home, Desktop, Documents,
+            // Downloads, PlexusProjects): a parent-level brain would capture every future
+            // non-git subfolder under it. This is exactly the terminal-first path — the
+            // user pastes the MCP command, opens the AI at home, and says "build my app" —
+            // so root the project in its own subfolder instead.
+            const HOME = require('os').homedir();
+            const broadDirs = [HOME, path.join(HOME, 'Desktop'), path.join(HOME, 'Documents'), path.join(HOME, 'Downloads'), path.join(HOME, 'PlexusProjects')];
+            let relocated = false;
+            if (broadDirs.includes(targetPath)) {
+                const slug = (projName || 'plexus-project').replace(/[^a-zA-Z0-9-_ ]/g, '').trim().replace(/\s+/g, '-') || 'plexus-project';
+                const base = targetPath === HOME ? path.join(HOME, 'PlexusProjects') : targetPath;
+                targetPath = path.join(base, slug);
+                integrationPath = path.join(targetPath, 'plexus-integration');
+                if (fs.existsSync(integrationPath)) {
+                    return `A brain already exists at ${targetPath} — open your sessions from that folder and call session_open.`;
+                }
+                fs.mkdirSync(targetPath, { recursive: true });
+                try { execFileSync('git', ['init', '-q'], { cwd: targetPath }); } catch { /* git optional */ }
+                relocated = true;
+            }
+            if (!projName) projName = path.basename(targetPath);
             try {
                 execFileSync(process.execPath, [path.join(__dirname, 'cli.js'), 'init', '-t', targetPath, '-n', projName],
                     { encoding: 'utf8', timeout: 60000 });
@@ -295,6 +316,9 @@ async function callTool(name: string, args: any): Promise<string> {
             const booted = await ensureEngine();
             return [
                 `⬡ ${projName} now has a brain (engine ${booted ? 'running' : 'created — will boot on first use'} · api :${entry.api_port} · 3D brain http://localhost:${entry.ws_port}).`,
+                relocated
+                    ? `NOTE — this session started in a broad folder, so the project was rooted at ${targetPath}. Do ALL work inside that folder (use absolute paths), and tell the user plainly: their project lives at ${targetPath}, and future AI sessions should be opened FROM that folder.`
+                    : '',
                 caged
                     ? 'The enforcement cage is installed: consult-before-edit is now MECHANICAL here — a PreToolUse hook blocks unconsulted source edits (it re-arms this session on your next SessionStart). Consult files before you edit them.'
                     : '',

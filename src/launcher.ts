@@ -687,7 +687,23 @@ export function startLauncher(open = true) {
                 // editor installed but its shell command isn't — open the bundle directly
                 // (wherever it lives, incl. ~/Downloads via the Spotlight lookup)
                 spawn('open', ['-a', appPath, projectPath], { detached: true, stdio: 'ignore' }).unref();
-                return res.json({ ok: true, opened: spec!.label });
+                // macOS won't launch a second instance of the same app: if another COPY is
+                // already running (e.g. an old translocated Downloads build), the folder is
+                // delivered to THAT instance — often invisibly. Say so instead of lying "ok".
+                let note: string | undefined;
+                try {
+                    const base = path.basename(appPath);
+                    const psOut = execFileSync('ps', ['-axo', 'command'], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+                    const line = psOut.split('\n').find(l => l.includes(`/${base}/Contents/MacOS/`));
+                    if (line) {
+                        const m = line.match(new RegExp(`(/.*?/${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})/Contents/MacOS/`));
+                        const runningApp = m ? m[1] : null;
+                        if (runningApp && path.resolve(runningApp) !== path.resolve(appPath)) {
+                            note = `${spec!.label} is already running from a different copy — the folder was sent to that instance (its window may be behind others). Quit ${spec!.label} and reopen to switch to the ${appPath} install.`;
+                        }
+                    }
+                } catch { /* diagnostics only */ }
+                return res.json({ ok: true, opened: spec!.label, note });
             }
             if (client === 'folder') { // reveal in Finder / Explorer
                 const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';

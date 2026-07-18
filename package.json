@@ -1,6 +1,6 @@
 {
   "name": "plexus",
-  "version": "1.0.25",
+  "version": "1.0.26",
   "description": "Plexus Neural Connectome Engine",
   "main": "dist/index.js",
   "bin": {

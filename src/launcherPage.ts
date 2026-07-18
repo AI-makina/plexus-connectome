@@ -241,8 +241,9 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <p class="hint">Describe it in your own words — your AI and the librarian turn this into the brain. You never file anything into lobes.</p>
     <div class="row" style="margin-top:18px">
       <div class="grow"><label>Project name</label><input type="text" id="np-name" placeholder="my-app"></div>
-      <div class="grow"><label>Create inside</label><input type="text" id="np-base"></div>
+      <div class="grow"><label>Create inside</label><div class="row"><input type="text" id="np-base" class="grow"><button onclick="browse(document.getElementById('np-base').value,'np-base','np-fsbox')">browse</button></div></div>
     </div>
+    <div class="fsbox" id="np-fsbox" style="display:none"></div>
     <label>What are you imagining?</label>
     <textarea id="np-desc" style="min-height:130px;font-family:var(--sans);font-size:14px" placeholder="Write it like you'd tell a friend. What it does, who it's for, what the user sees, what it talks to, anything that should happen on its own…"></textarea>
     <label>What must never go wrong? <span style="color:var(--lo);text-transform:none;letter-spacing:0">(optional — these become standing guards your AI is warned about forever)</span></label>
@@ -352,17 +353,22 @@ async function createProject(){
   loadProjects();
 }
 
-// connect existing
-async function browse(p){
-  const box = document.getElementById('fsbox');
+// folder browser — shared by Connect Existing (cx-path/fsbox, the defaults) and the
+// New Project "Create inside" field (np-base/np-fsbox). Navigating into a folder sets
+// the input; "✓ use this folder" closes the box.
+function closeFsbox(id){ var b=document.getElementById(id); if(b) b.style.display='none'; }
+async function browse(p, inputId, boxId){
+  inputId = inputId || 'cx-path'; boxId = boxId || 'fsbox';
+  const box = document.getElementById(boxId);
   const r = await fetch('/api/launcher/fs?path='+encodeURIComponent(p||'')).then(x=>x.json());
   if(r.error){box.style.display='block';box.innerHTML='<div class="hint">'+esc(r.error)+'</div>';return;}
-  document.getElementById('cx-path').value = r.path;
+  document.getElementById(inputId).value = r.path;
   box.style.display='block';
   box.innerHTML =
-    '<div class="fsrow" onclick="browse(\\''+esc(r.parent)+'\\')">↑ ..</div>' +
-    r.dirs.map(d=>'<div class="fsrow" onclick="browse(\\''+esc(r.path+'/'+d)+'\\')">▸ '+esc(d)+'</div>').join('') +
-    (r.has_plexus?'<div class="hint" style="padding:6px 10px">⬡ this folder already has a Plexus brain — connecting will refresh it</div>':'');
+    '<div class="fsrow" onclick="closeFsbox(\\''+boxId+'\\')">✓ use this folder</div>' +
+    '<div class="fsrow" onclick="browse(\\''+esc(r.parent)+'\\',\\''+inputId+'\\',\\''+boxId+'\\')">↑ ..</div>' +
+    r.dirs.map(d=>'<div class="fsrow" onclick="browse(\\''+esc(r.path+'/'+d)+'\\',\\''+inputId+'\\',\\''+boxId+'\\')">▸ '+esc(d)+'</div>').join('') +
+    (r.has_plexus && boxId==='fsbox' ? '<div class="hint" style="padding:6px 10px">⬡ this folder already has a Plexus brain — connecting will refresh it</div>':'');
 }
 async function connectProject(){
   const p = document.getElementById('cx-path').value.trim();

@@ -203,7 +203,10 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
 <div class="wrap">
   <header>
     <span class="glyph">⬡</span><h1>PLEXUS</h1><span class="tag">launcher · evidence protocol</span>
-    <a href="/manager" style="margin-left:auto;color:var(--azure);text-decoration:none;font:500 12px var(--sans)">Manager →</a>
+    <span style="margin-left:auto;display:flex;gap:16px;align-items:baseline">
+      <span onclick="replayIntro()" style="cursor:pointer;color:var(--lo);font:500 11px var(--mono)" title="watch the Plexus intro again">intro ⟲</span>
+      <a href="/manager" style="color:var(--azure);text-decoration:none;font:500 12px var(--sans)">Manager →</a>
+    </span>
   </header>
 
   <!-- HOME -->
@@ -404,12 +407,16 @@ function wizStep(n){
   var v=document.getElementById('wiz-vid');
   if(n===1){ if(v){ try{ v.currentTime=0; v.play(); }catch(e){} } }
   else if(v){ try{ v.pause(); }catch(e){} } // else a hidden video's onended could drag the user back
+  if(n>=2){ // reaching the setup windows = pitch seen once — never replay the wizard as a nag
+    fetch('/api/launcher/onboarding/complete',{method:'POST'}).catch(function(){});
+  }
   if(n===2){ // detection is on-request (the Search button) — only prefill the terminal command
     var g=document.getElementById('wiz-global-cmd');
     if(g){ if(GLOBAL_MCP) g.textContent=GLOBAL_MCP;
       else fetch('/api/launcher/clients').then(function(x){return x.json();}).then(function(r){ GLOBAL_MCP=r.global_mcp||''; if(GLOBAL_MCP) g.textContent=GLOBAL_MCP; }).catch(function(){}); }
   }
 }
+function replayIntro(){ document.getElementById('wizard').classList.add('show'); wizStep(0); }
 function wizSearch(btn){
   btn.disabled=true; btn.textContent='searching…';
   renderClients(document.getElementById('wiz-clients'), 'wiz-connect-result').then(function(){

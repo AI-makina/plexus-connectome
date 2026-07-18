@@ -110,6 +110,8 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .clientrow .ci{flex:1;min-width:0}.clientrow .ci b{font-size:14px}
   .clientrow .c-state{font:10px var(--mono);color:var(--lo);margin-left:8px;text-transform:uppercase;letter-spacing:.06em}
   .clientrow .c-hint{font-size:10.5px;color:var(--lo);margin-top:2px;line-height:1.4}
+  .opt-label{font:600 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--azure);margin:16px 0 8px;text-align:left}
+  .opt-note{font-size:11px;color:var(--lo);text-align:left;margin:8px 0 2px;line-height:1.5}
   .clientrow .ok{color:var(--jade);font-size:16px}
   .wiz-ok{color:var(--jade);font-size:13px;margin:10px 0;background:rgba(115,201,145,.1);border:1px solid rgba(115,201,145,.3);border-radius:8px;padding:9px 12px}
   .wiz-manual{font-size:12px;color:var(--mid);text-align:left;margin:10px 0}
@@ -157,8 +159,15 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <div class="wstep" data-step="2">
       <div class="wiz-brand"><img src="/assets/launcher/plexus_icon_2_ultrablack.png" alt=""><span class="wiz-wordmark">Plexus</span></div>
       <div class="wiz-h">Connect Plexus to your AI</div>
-      <div class="wiz-p">One time. Pick the AI tools you use — Plexus works the same in all of them, and every project you make is found automatically.</div>
-      <div id="wiz-clients"></div>
+      <div class="wiz-p">One time. After this, any project you open in a connected AI finds its brain automatically — nothing to point, nothing to pin.</div>
+      <div style="text-align:left">
+        <div class="opt-label">Option 1 · Connect an app</div>
+        <div id="wiz-clients"></div>
+        <div class="opt-note">Every model a connected app runs — Claude, Gemini, GPT, local — automatically uses the brain of whichever Plexus project you open there.</div>
+        <div class="opt-label">Option 2 · Use your terminal instead</div>
+        <div class="cmd" id="wiz-global-cmd" onclick="copyGlobal(this)">loading…</div>
+        <div class="opt-note">The exact same one-time connection for Claude Code, done by hand. Either way, afterwards you just open your AI inside a project folder and talk.</div>
+      </div>
       <div id="wiz-connect-result"></div>
       <div class="wiz-actions">
         <button class="primary" onclick="wizStep(3)">Next</button>
@@ -328,10 +337,12 @@ async function createProject(){
   document.getElementById('np-result').innerHTML = \`
     <div class="result">
       <h4>⬡ \${esc(name)} is ready — your brief is in the brain, waiting for your AI.</h4>
+      \${connectedNote()}
       <div class="steps">
-        <b>1.</b> Plug your AI in (paste in a terminal, once): <div class="cmd" onclick="copyText(this.textContent,null)">\${esc(r.mcp_command)}</div>
-        <b>2.</b> Open a Claude Code session in <span class="mono">\${esc(r.path)}</span>. Its first contact receives your brief — it interviews you conversationally about anything unclear, then seeds the connectome itself. The librarian places every element; the relationships are what matter.<br>
-        <b>3.</b> <button onclick="serveProject('\${esc(r.path)}', \${r.ws_port})">Start + open the brain</button> — watch it grow as you two build.
+        <b>1.</b> Open your AI in this project — its first contact receives your brief, it interviews you about anything unclear, then seeds the connectome itself:<br>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">\${openHereButtons(r.path,'np-open-note')}</div>
+        <div id="np-open-note"></div>
+        <b>2.</b> <button onclick="serveProject('\${esc(r.path)}', \${r.ws_port})">Start + open the brain</button> — watch it grow as you two build.
       </div>
     </div>\`;
   loadProjects();
@@ -368,9 +379,11 @@ async function connectProject(){
       <div class="bar">\${bar}</div>
       \${(rep.enrichment_questions||[]).slice(0,5).map(q=>'<div class="qa">? '+esc(q)+'</div>').join('')}
       <div class="steps" style="margin-top:14px">
-        <b>1.</b> <button onclick="serveProject('\${esc(r.path)}', \${r.ws_port})">Start + open the brain</button><br>
-        <b>2.</b> Plug your AI in: <div class="cmd" onclick="copyText(this.textContent,null)">\${esc(r.mcp_command)}</div>
-        <b>3.</b> In its first session the AI receives the catch-up questions above and fills in what scanning can't see.
+        \${connectedNote()}
+        <b>1.</b> Open your AI in this project — its first session receives the catch-up questions above and fills in what scanning can't see:<br>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">\${openHereButtons(r.path,'cx-open-note')}</div>
+        <div id="cx-open-note"></div>
+        <b>2.</b> <button onclick="serveProject('\${esc(r.path)}', \${r.ws_port})">Start + open the brain</button> — watch it grow as you build.
       </div>
     </div>\`;
   loadProjects();
@@ -399,6 +412,7 @@ function vidEnded(){ var s=document.querySelector('.wstep[data-step="1"]'); if(s
 // wizard (step 2) AND the dashboard panel, so connecting in either place is the
 // same act and both surfaces always agree. Returns the installed clients.
 var GLOBAL_MCP='';
+var INSTALLED=[]; // last detection result (installed clients) — shared by results screens
 function copyGlobal(el){ if(!GLOBAL_MCP) return; navigator.clipboard.writeText(GLOBAL_MCP); var o=el.textContent; el.textContent='copied ✓'; setTimeout(function(){el.textContent=o;},1500); }
 function renderClients(listEl, resultId){
   listEl.innerHTML = '<div class="hint">detecting your AI tools…</div>';
@@ -406,6 +420,7 @@ function renderClients(listEl, resultId){
     GLOBAL_MCP = r.global_mcp || '';
     // Only what's actually ON this machine — an uninstalled app is noise, not a choice.
     var inst = (r.clients || []).filter(function(c){ return c.installed; });
+    INSTALLED = inst;
     if(!inst.length){
       listEl.innerHTML = '<div class="hint">No AI tools detected on this machine. Install one (Claude Code, Antigravity, Cursor…), or paste this into any MCP-capable client:</div>'
         + '<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(GLOBAL_MCP)+'</div>';
@@ -420,7 +435,35 @@ function renderClients(listEl, resultId){
   });
 }
 function loadWizClients(){
-  renderClients(document.getElementById('wiz-clients'), 'wiz-connect-result').catch(function(){ document.getElementById('wiz-clients').innerHTML='<div class="hint">could not detect AI tools</div>'; });
+  renderClients(document.getElementById('wiz-clients'), 'wiz-connect-result').then(function(){
+    var g = document.getElementById('wiz-global-cmd'); if(g && GLOBAL_MCP) g.textContent = GLOBAL_MCP;
+  }).catch(function(){ document.getElementById('wiz-clients').innerHTML='<div class="hint">could not detect AI tools</div>'; });
+}
+
+// ── Post-create handoff: one-click "open your AI in this project" ──
+// The folder IS the pointer — the AI opened here resolves this brain automatically.
+function openHereButtons(p, noteId){
+  var list = (INSTALLED||[]).filter(function(c){ return c.can_open_folder || c.id==='claude'; });
+  if(!list.length) return '<span class="hint">open a terminal in this folder and start your AI</span>';
+  return list.map(function(c){
+    var lbl = c.id==='claude' ? 'Open Terminal here · Claude Code' : 'Open in '+esc(c.label);
+    return '<button data-p="'+esc(p)+'" data-c="'+esc(c.id)+'" data-n="'+esc(noteId)+'" onclick="openProjectIn(this)">'+lbl+'</button>';
+  }).join(' ');
+}
+function openProjectIn(btn){
+  var p=btn.getAttribute('data-p'), c=btn.getAttribute('data-c'), n=btn.getAttribute('data-n');
+  var orig=btn.textContent; btn.disabled=true; btn.textContent='opening…';
+  fetch('/api/launcher/open-editor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p,client:c})})
+    .then(function(x){return x.json();}).then(function(r){
+      btn.disabled=false; btn.textContent = r.ok ? 'opened ✓' : orig;
+      var note=document.getElementById(n);
+      if(note){ var h=''; if(r.note) h+='<div class="hint">'+esc(r.note)+'</div>'; if(r.command) h+='<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(r.command)+'</div>'; note.innerHTML=h; }
+    }).catch(function(){ btn.disabled=false; btn.textContent=orig; });
+}
+function connectedNote(){
+  var conn=(INSTALLED||[]).filter(function(c){ return c.connected===true; });
+  if(conn.length) return '<div class="hint" style="margin:4px 0 10px">✓ '+esc(conn.map(function(c){return c.label;}).join(', '))+' is connected — opening it in this folder finds the brain automatically. Just talk about your app.</div>';
+  return '<div class="hint" style="margin:4px 0 10px">Your AI is not connected yet — do the one-time connect at the top of this page first (or copy its terminal command).</div>';
 }
 function loadConnections(){
   var head = document.getElementById('conn-head'), sub = document.getElementById('conn-sub');

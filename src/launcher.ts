@@ -99,6 +99,36 @@ function savePrefs(p: any): void {
     try { fs.mkdirSync(path.dirname(PREFS_FILE), { recursive: true }); fs.writeFileSync(PREFS_FILE, JSON.stringify(p, null, 2)); } catch { /* best-effort */ }
 }
 
+// ── Stable MCP address (~/.plexus/bin/plexus) ──
+// AI-client configs must never point INSIDE an install location: app updates rewrite
+// bundle contents, macOS translocation randomizes run paths, and users may have no
+// global node. So registrations reference this SHIM, and the launcher rewrites the
+// shim at startup to exec the current runtime + engine — configs survive every move,
+// including the eventual jump from a dev repo to /Applications/Plexus.app.
+const SHIM_DIR = path.join(os.homedir(), '.plexus', 'bin');
+const SHIM_PATH = path.join(SHIM_DIR, 'plexus');
+function ensureShim(): string {
+    if (process.platform === 'win32') return ''; // windows shim comes with the packaged app
+    try {
+        fs.mkdirSync(SHIM_DIR, { recursive: true });
+        const body = `#!/bin/sh\n# Plexus shim — the stable address AI-client MCP configs point at.\n# Rewritten by the Plexus launcher at startup; do not edit.\nexec "${process.execPath}" "${CLI}" "$@"\n`;
+        let cur = '';
+        try { cur = fs.readFileSync(SHIM_PATH, 'utf8'); } catch { /* first run */ }
+        if (cur !== body) fs.writeFileSync(SHIM_PATH, body, { mode: 0o755 });
+        else fs.chmodSync(SHIM_PATH, 0o755);
+        return SHIM_PATH;
+    } catch { return ''; }
+}
+// What an MCP config should launch. Prefer the shim; raw runtime+cli only as fallback.
+function mcpServerSpec(): { command: string; args: string[] } {
+    if (process.platform !== 'win32' && fs.existsSync(SHIM_PATH)) return { command: SHIM_PATH, args: ['mcp'] };
+    return { command: process.execPath, args: [CLI, 'mcp'] };
+}
+function globalMcpCmd(): string {
+    const s = mcpServerSpec();
+    return `claude mcp add --scope user plexus -- "${s.command}" ${s.args.map(a => (a === 'mcp' ? 'mcp' : `"${a}"`)).join(' ')}`;
+}
+
 // Is a command on PATH? (detect installed AI clients / editors)
 function onPath(cmd: string): boolean {
     try { return !!execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { encoding: 'utf8' }).split('\n')[0].trim(); }
@@ -197,6 +227,7 @@ async function detectClients(force = false): Promise<any[]> {
 // ─── Server ───────────────────────────────────────────────────────────────────
 
 export function startLauncher(open = true) {
+    ensureShim(); // stable MCP address before anything reads or registers it
     const app = express();
     app.use(express.json({ limit: '1mb' }));
 
@@ -227,11 +258,12 @@ export function startLauncher(open = true) {
         const reg = loadRegistry();
         const out = [];
         for (const p of reg.projects) {
+            const s = mcpServerSpec();
             out.push({
                 ...p,
                 exists: fs.existsSync(p.path),
                 running: await probe(p.api_port),
-                mcp_command: `claude mcp add plexus -- node "${CLI}" mcp -p "${p.path}"`,
+                mcp_command: `claude mcp add plexus -- "${s.command}" ${s.args.map(a => (a === 'mcp' ? 'mcp' : `"${a}"`)).join(' ')} -p "${p.path}"`,
             });
         }
         res.json({
@@ -240,7 +272,7 @@ export function startLauncher(open = true) {
             // The AI-first path: register ONCE (user scope, no project path) —
             // the plug resolves the brain from wherever a session is opened,
             // and init_project lets the AI create brains itself.
-            global_mcp: `claude mcp add --scope user plexus -- node "${CLI}" mcp`,
+            global_mcp: globalMcpCmd(),
         });
     });
 
@@ -566,17 +598,18 @@ export function startLauncher(open = true) {
 
     // ── AI clients: which are installed + (Claude Code only) is Plexus already connected ──
     app.get('/api/launcher/clients', async (_req, res) => {
-        res.json({ clients: await detectClients(), global_mcp: `claude mcp add --scope user plexus -- node "${CLI}" mcp` });
+        res.json({ clients: await detectClients(), global_mcp: globalMcpCmd() });
     });
 
     // ── Connect Plexus to an AI client (one-time). Claude Code = run it for the user;
     // other clients = hand back the config/command to paste. User-initiated only. ──
     app.post('/api/launcher/connect-mcp', (req, res) => {
         const client = String(req.body?.client || 'claude');
-        const globalCmd = `claude mcp add --scope user plexus -- node "${CLI}" mcp`;
+        const spec = ensureShim() ? mcpServerSpec() : { command: process.execPath, args: [CLI, 'mcp'] };
+        const globalCmd = globalMcpCmd();
         if (client === 'claude') {
             try {
-                const out = execFileSync('claude', ['mcp', 'add', '--scope', 'user', 'plexus', '--', process.execPath, CLI, 'mcp'], { encoding: 'utf8', timeout: 15000 });
+                const out = execFileSync('claude', ['mcp', 'add', '--scope', 'user', 'plexus', '--', spec.command, ...spec.args], { encoding: 'utf8', timeout: 15000 });
                 clientsCache = null; // re-detect so the ✓ shows immediately
                 return res.json({ ok: true, ran: true, output: String(out).trim(), command: globalCmd });
             } catch (err: any) {
@@ -588,25 +621,24 @@ export function startLauncher(open = true) {
         if (client === 'codex') {
             // Codex CLI has its own registration command; it writes ~/.codex/config.toml globally.
             try {
-                execFileSync('codex', ['mcp', 'add', 'plexus', '--', process.execPath, CLI, 'mcp'], { encoding: 'utf8', timeout: 15000 });
+                execFileSync('codex', ['mcp', 'add', 'plexus', '--', spec.command, ...spec.args], { encoding: 'utf8', timeout: 15000 });
                 clientsCache = null;
                 return res.json({ ok: true, ran: true, command: globalCmd });
             } catch { /* older codex / not on PATH — fall through to the manual TOML below */ }
         }
         // Everyone else (and codex fallback): hand back the server config to paste — in THAT
         // client's format, with the exact file path when its config location is known.
-        const spec = AI_CLIENTS.find(c => c.id === client);
-        const server = { command: process.execPath, args: [CLI, 'mcp'] };
-        let snippet = JSON.stringify({ mcpServers: { plexus: server } }, null, 2);
-        if (client === 'code') snippet = JSON.stringify({ servers: { plexus: server } }, null, 2); // VS Code mcp.json uses "servers"
-        if (client === 'codex') snippet = `[mcp_servers.plexus]\ncommand = "${process.execPath}"\nargs = ["${CLI}", "mcp"]`; // TOML
+        const known = AI_CLIENTS.find(c => c.id === client);
+        let snippet = JSON.stringify({ mcpServers: { plexus: spec } }, null, 2);
+        if (client === 'code') snippet = JSON.stringify({ servers: { plexus: spec } }, null, 2); // VS Code mcp.json uses "servers"
+        if (client === 'codex') snippet = `[mcp_servers.plexus]\ncommand = "${spec.command}"\nargs = [${spec.args.map(a => `"${a}"`).join(', ')}]`; // TOML
         res.json({
             ok: false, ran: false, manual: true, command: globalCmd,
-            config_path: spec?.mcpConfig,
+            config_path: known?.mcpConfig,
             config_json: snippet,
-            note: spec?.mcpConfig
-                ? `Merge this into the file, then restart ${spec.label}.`
-                : `Add Plexus to ${spec?.label || client}'s MCP config, then reopen it.`,
+            note: known?.mcpConfig
+                ? `Merge this into the file, then restart ${known.label}.`
+                : `Add Plexus to ${known?.label || client}'s MCP config, then reopen it.`,
         });
     });
 

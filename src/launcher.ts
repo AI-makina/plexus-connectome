@@ -700,6 +700,12 @@ export function startLauncher(open = true) {
                     'tell application "Terminal"',
                     '\tactivate',
                     `\tdo script "cd " & quoted form of ${JSON.stringify(projectPath)} & " && claude"`,
+                    // Claude Code's TUI assumes a dark terminal; Terminal.app's default
+                    // "Basic" profile is white and renders it as black blocks. Force the
+                    // built-in dark "Pro" profile for this window (best-effort).
+                    '\ttry',
+                    '\t\tset current settings of front window to settings set "Pro"',
+                    '\tend try',
                     'end tell',
                 ].join('\n');
                 execFile('osascript', ['-e', scpt], { encoding: 'utf8', timeout: 15000 }, () => { /* fire-and-forget */ });

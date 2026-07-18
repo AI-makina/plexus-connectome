@@ -551,7 +551,7 @@ function openHereButtons(p, noteId){
   var list = (INSTALLED||[]).filter(function(c){ return c.can_open_folder || c.id==='claude'; });
   if(!list.length) return '<span class="hint">open a terminal in this folder and start your AI</span>';
   return list.map(function(c){
-    var lbl = c.id==='claude' ? 'Open Terminal here · Claude Code' : 'Open in '+esc(c.label);
+    var lbl = c.id==='claude' ? 'Start Claude Code here' : 'Open in '+esc(c.label);
     return '<button data-p="'+esc(p)+'" data-c="'+esc(c.id)+'" data-n="'+esc(noteId)+'" onclick="openProjectIn(this)">'+lbl+'</button>';
   }).join(' ');
 }

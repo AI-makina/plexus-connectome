@@ -694,9 +694,16 @@ export function startLauncher(open = true) {
                 spawn(opener, [projectPath], { detached: true, stdio: 'ignore' }).unref();
                 return res.json({ ok: true, opened: 'folder' });
             }
-            if (client === 'claude' && process.platform === 'darwin') { // open Terminal at the folder
-                spawn('open', ['-a', 'Terminal', projectPath], { detached: true, stdio: 'ignore' }).unref();
-                return res.json({ ok: true, opened: 'Terminal', command: `${resumeCmd} && claude`, note: 'Terminal opened here — run `claude` to resume.' });
+            if (client === 'claude' && process.platform === 'darwin') {
+                // Don't just open a terminal — START Claude Code in the project folder.
+                const scpt = [
+                    'tell application "Terminal"',
+                    '\tactivate',
+                    `\tdo script "cd " & quoted form of ${JSON.stringify(projectPath)} & " && claude"`,
+                    'end tell',
+                ].join('\n');
+                execFile('osascript', ['-e', scpt], { encoding: 'utf8', timeout: 15000 }, () => { /* fire-and-forget */ });
+                return res.json({ ok: true, opened: 'Claude Code', note: 'Claude Code is starting in a Terminal window at this project — just talk about your app there.' });
             }
         } catch (err: any) {
             return res.json({ ok: false, error: err.message, command: resumeCmd });

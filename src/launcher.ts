@@ -259,14 +259,15 @@ export function startLauncher(open = true) {
         const reg = loadRegistry();
         const out = [];
         for (const p of reg.projects) {
-            const s = mcpServerSpec();
             out.push({
                 ...p,
                 exists: fs.existsSync(p.path),
                 running: await probe(p.api_port),
-                mcp_command: `claude mcp add plexus -- "${s.command}" ${s.args.map(a => (a === 'mcp' ? 'mcp' : `"${a}"`)).join(' ')} -p "${p.path}"`,
                 // Integration v2 door: paste in a terminal (NOT into an AI chat) —
                 // moves that terminal into the project and starts the AI there.
+                // (Pin-style `-p` commands were removed from every consumer surface:
+                // they re-point Plexus without moving the session's anchor = split-brain.
+                // The -p flag itself remains a CLI/dev capability.)
                 connect_code: workCommand(p.name),
             });
         }
@@ -525,7 +526,6 @@ export function startLauncher(open = true) {
 
             res.json({
                 success: true, path: projectPath, api_port: apiPort, ws_port: wsPort,
-                mcp_command: `claude mcp add plexus -- node "${CLI}" mcp -p "${projectPath}"`,
                 connect_code: workCommand(name),
                 plug: 'per-project (.mcp.json written by init — sessions in this folder auto-load Plexus)',
             });
@@ -586,7 +586,6 @@ export function startLauncher(open = true) {
                     origin_mix: report.origin_mix,
                 },
                 mined_proposals: proposals,
-                mcp_command: `claude mcp add plexus -- node "${CLI}" mcp -p "${projectPath}"`,
                 connect_code: workCommand(entry.name),
                 plug: plugResult.error ? `plug NOT written: ${plugResult.error}` : 'per-project (.mcp.json — sessions in this folder auto-load Plexus)',
             });

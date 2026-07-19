@@ -619,9 +619,34 @@ export function startLauncher(open = true) {
     app.post('/api/launcher/forget', (req, res) => {
         const projectPath = path.resolve(String(req.body?.path || ''));
         const reg = loadRegistry();
-        reg.projects = reg.projects.filter(p => p.path !== projectPath);
+        // Return the removed entry so the UI's Undo toast can restore it EXACTLY
+        // (same ports/kind/owner) — better than a re-connect, which mints new ports.
+        const removed = reg.projects.find(p => path.resolve(p.path) === projectPath) || null;
+        reg.projects = reg.projects.filter(p => path.resolve(p.path) !== projectPath);
         saveRegistry(reg);
-        res.json({ success: true, note: 'removed from the launcher registry only — nothing on disk was touched' });
+        res.json({ success: true, removed, note: 'removed from the launcher registry only — nothing on disk was touched' });
+    });
+
+    // Undo for ✕: put the forgotten entry back verbatim.
+    app.post('/api/launcher/restore', (req, res) => {
+        const entry = req.body?.entry;
+        if (!entry || typeof entry.path !== 'string' || typeof entry.name !== 'string'
+            || typeof entry.api_port !== 'number' || typeof entry.ws_port !== 'number') {
+            return res.status(400).json({ error: 'entry {name, path, api_port, ws_port, …} required' });
+        }
+        const reg = loadRegistry();
+        if (reg.projects.some(p => path.resolve(p.path) === path.resolve(entry.path))) {
+            return res.json({ success: true, already: true });
+        }
+        reg.projects.unshift({
+            name: entry.name, path: entry.path,
+            api_port: entry.api_port, ws_port: entry.ws_port,
+            created_at: entry.created_at || new Date().toISOString(),
+            kind: entry.kind === 'genesis' ? 'genesis' : 'connected',
+            ...(entry.owner ? { owner: String(entry.owner) } : {}),
+        });
+        saveRegistry(reg);
+        res.json({ success: true });
     });
 
     // ── Registry heal (Integration v2, P0): a separate, REVERSIBLE diagnostic ──

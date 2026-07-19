@@ -352,9 +352,29 @@ async function serveProject(p, uiPort){
   window.open('http://localhost:'+uiPort,'_blank');
   setTimeout(loadProjects,1200);
 }
+let LAST_FORGOTTEN=null, TOAST_TIMER=null;
 async function forget(p){
-  await fetch('/api/launcher/forget',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p})});
+  const r = await fetch('/api/launcher/forget',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p})}).then(x=>x.json());
+  LAST_FORGOTTEN = r.removed || null;
   loadProjects();
+  if(LAST_FORGOTTEN) showUndoToast(LAST_FORGOTTEN.name);
+}
+function showUndoToast(name){
+  dismissToast();
+  const t=document.createElement('div'); t.id='undo-toast';
+  t.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#141B2E;border:1px solid var(--azure);border-radius:10px;padding:10px 16px;font:13px var(--mono);color:#E6EDF3;display:flex;gap:14px;align-items:center;z-index:99;box-shadow:0 6px 24px rgba(0,0,0,.5)';
+  const s=document.createElement('span'); s.textContent='"'+name+'" removed from the launcher (files untouched)';
+  const b=document.createElement('button'); b.textContent='Undo';
+  b.style.cssText='background:var(--azure);border:none;color:#0A0F1E;font-weight:600;border-radius:6px;padding:4px 12px;cursor:pointer';
+  b.onclick=undoForget;
+  t.appendChild(s); t.appendChild(b); document.body.appendChild(t);
+  TOAST_TIMER=setTimeout(dismissToast, 8000);
+}
+function dismissToast(){ if(TOAST_TIMER){clearTimeout(TOAST_TIMER);TOAST_TIMER=null;} const t=document.getElementById('undo-toast'); if(t) t.remove(); }
+async function undoForget(){
+  if(!LAST_FORGOTTEN) return dismissToast();
+  await fetch('/api/launcher/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({entry:LAST_FORGOTTEN})});
+  LAST_FORGOTTEN=null; dismissToast(); loadProjects();
 }
 function copyText(t, btn){navigator.clipboard.writeText(t);if(btn){const o=btn.textContent;btn.textContent='copied ✓';setTimeout(()=>btn.textContent=o,1500);}}
 

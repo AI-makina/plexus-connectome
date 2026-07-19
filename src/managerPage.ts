@@ -198,6 +198,11 @@ function renderConnectome(c){
       + '<span class="stat">divergences <b>'+(live.divergences||0)+'</b></span>'
       + (live.planned_ratio!=null ? '<span class="stat">planned <b>'+Math.round(live.planned_ratio*100)+'%</b></span>' : '')
     : '';
+  // Evidence-trust quarantine: deposits awaiting review — shown whenever the
+  // engine reports any, even before effectiveness data exists.
+  if (c.running && live.pending_deposits) {
+    stats += '<span class="stat" style="color:var(--amber)" title="Quarantined graph deposits awaiting review — accept or reject them on the connectome (GET /api/pending)">pending review <b>'+live.pending_deposits+'</b></span>';
+  }
   var action = updateAction(c);
   var hasDetail = c.running && score!=null;
   var isOpen = !!OPEN[c.path];

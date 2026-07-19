@@ -309,10 +309,11 @@ export function startLauncher(open = true) {
                 agg.running++;
                 // Pull BOTH tracks: the quantitative dye (effectiveness) AND the qualitative
                 // questionnaire (feedback). This is the client→vendor half of the loop.
-                const [ver, eff, fb] = await Promise.all([
+                const [ver, eff, fb, pend] = await Promise.all([
                     fetchJson(p.api_port, '/api/engine/version'),
                     fetchJson(p.api_port, '/api/effectiveness'),
                     fetchJson(p.api_port, '/api/feedback'),
+                    fetchJson(p.api_port, '/api/pending'), // quarantine tray (older engines 404 → null → 0)
                 ]);
                 const cc = eff?.claim_check || {};
                 const divTotal = eff?.divergences ? Object.values(eff.divergences).reduce((a: number, b: any) => a + b, 0) : 0;
@@ -333,6 +334,7 @@ export function startLauncher(open = true) {
                     by_model: eff?.by_model ?? null,           // per-model hallucination trend
                     recent_days: eff?.recent_days ?? null,     // 14-day activity
                     feedback: fb ? { total: fb.total ?? 0, by_theme: fb.by_theme ?? {}, recent: (fb.recent || []).slice(0, 5) } : null,
+                    pending_deposits: pend?.count ?? 0, // evidence-trust: deposits awaiting review
                 };
                 // Fold this connectome into the fleet aggregate.
                 if (typeof live.score === 'number') { agg.scoreSum += live.score; agg.scoreN++; }

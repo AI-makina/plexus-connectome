@@ -33,6 +33,31 @@ export function saveRegistry(r: Registry) {
     fs.writeFileSync(REGISTRY_FILE, JSON.stringify(r, null, 2));
 }
 
+/** Timestamp-free single backup before registry mutations that aren't plain appends. */
+export function backupRegistry(): void {
+    try { if (fs.existsSync(REGISTRY_FILE)) fs.copyFileSync(REGISTRY_FILE, REGISTRY_FILE + '.bak'); } catch { /* best-effort */ }
+}
+
+// ── Broad-base guards (init_project) ──────────────────────────────────────────
+// Classic broad dirs are NEVER a legitimate project root — auto-relocate.
+// Registry-derived bases (the user's chosen projects folder, parents of known
+// projects) MIGHT be a legit monorepo root — those get an explicit choice
+// instead of silent relocation.
+export function classicBroadDirs(): string[] {
+    const HOME = os.homedir();
+    return [HOME, path.join(HOME, 'Desktop'), path.join(HOME, 'Documents'), path.join(HOME, 'Downloads'), path.join(HOME, 'PlexusProjects')];
+}
+export function registryBases(): string[] {
+    const bases = new Set<string>();
+    try {
+        const prefs = JSON.parse(fs.readFileSync(path.join(REGISTRY_DIR, 'prefs.json'), 'utf8'));
+        if (prefs?.lastBase) bases.add(path.resolve(prefs.lastBase));
+    } catch { /* no prefs yet */ }
+    for (const p of loadRegistry().projects) bases.add(path.dirname(path.resolve(p.path)));
+    for (const d of classicBroadDirs()) bases.delete(d);
+    return [...bases];
+}
+
 /** Register a project (idempotent by path) and assign it unique ports. */
 export function registerProject(projectPath: string, name: string, kind: 'genesis' | 'connected'): ProjectEntry {
     const reg = loadRegistry();

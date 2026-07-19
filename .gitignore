@@ -9,3 +9,6 @@ ui/node_modules/
 ui/dist/
 brain/
 plexus-integration/
+
+# Machine-local AI-client plug (absolute shim path) — written by plexus init/migration, never committed
+.mcp.json

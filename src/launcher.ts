@@ -22,7 +22,8 @@ import { MANAGER_HTML } from './managerPage';
 const LAUNCHER_PORT = parseInt(process.env.PLEXUS_LAUNCHER_PORT || '', 10) || 3199;
 const CLI = path.join(__dirname, 'cli.js');
 
-import { loadRegistry, saveRegistry, patchManifestPorts } from './core/registry';
+import { loadRegistry, saveRegistry, patchManifestPorts, backupRegistry } from './core/registry';
+import { writeProjectMcpJson, workCommand } from './core/clientConfig';
 
 function runCli(args: string[], cwd?: string): string {
     return execFileSync(process.execPath, [CLI, ...args], {
@@ -264,6 +265,9 @@ export function startLauncher(open = true) {
                 exists: fs.existsSync(p.path),
                 running: await probe(p.api_port),
                 mcp_command: `claude mcp add plexus -- "${s.command}" ${s.args.map(a => (a === 'mcp' ? 'mcp' : `"${a}"`)).join(' ')} -p "${p.path}"`,
+                // Integration v2 door: paste in a terminal (NOT into an AI chat) —
+                // moves that terminal into the project and starts the AI there.
+                connect_code: workCommand(p.name),
             });
         }
         res.json({
@@ -522,6 +526,8 @@ export function startLauncher(open = true) {
             res.json({
                 success: true, path: projectPath, api_port: apiPort, ws_port: wsPort,
                 mcp_command: `claude mcp add plexus -- node "${CLI}" mcp -p "${projectPath}"`,
+                connect_code: workCommand(name),
+                plug: 'per-project (.mcp.json written by init — sessions in this folder auto-load Plexus)',
             });
         } catch (err: any) {
             res.status(500).json({ error: err.message });
@@ -551,6 +557,11 @@ export function startLauncher(open = true) {
                 saveRegistry(reg);
             }
 
+            // Integration v2: the plug travels WITH the project. Fresh inits already
+            // wrote it; connecting an ALREADY-brained project must write it too.
+            const plugResult = writeProjectMcpJson(projectPath);
+            if (plugResult.error) console.warn(`[Plexus Launcher] project plug: ${plugResult.error}`);
+
             runCli(['analyze', '-p', projectPath]);
             runCli(['report', '-p', projectPath]);
             try { runCli(['mine', '-p', projectPath]); } catch { /* no git history is fine */ }
@@ -576,6 +587,8 @@ export function startLauncher(open = true) {
                 },
                 mined_proposals: proposals,
                 mcp_command: `claude mcp add plexus -- node "${CLI}" mcp -p "${projectPath}"`,
+                connect_code: workCommand(entry.name),
+                plug: plugResult.error ? `plug NOT written: ${plugResult.error}` : 'per-project (.mcp.json — sessions in this folder auto-load Plexus)',
             });
         } catch (err: any) {
             res.status(500).json({ error: err.message });
@@ -610,6 +623,57 @@ export function startLauncher(open = true) {
         reg.projects = reg.projects.filter(p => p.path !== projectPath);
         saveRegistry(reg);
         res.json({ success: true, note: 'removed from the launcher registry only — nothing on disk was touched' });
+    });
+
+    // ── Registry heal (Integration v2, P0): a separate, REVERSIBLE diagnostic ──
+    // Flags entries whose folder is gone (moved/deleted); repair rewrites the path
+    // only after a registry backup, and only to a folder that actually holds a brain.
+    app.get('/api/launcher/registry-health', (_req, res) => {
+        const reg = loadRegistry();
+        res.json({
+            entries: reg.projects.map(p => ({
+                name: p.name, path: p.path,
+                exists: fs.existsSync(p.path),
+                has_brain: fs.existsSync(path.join(p.path, 'plexus-integration')),
+            })),
+        });
+    });
+    app.post('/api/launcher/relocate', (req, res) => {
+        const { name, new_path } = req.body || {};
+        const target = path.resolve(String(new_path || ''));
+        if (!fs.existsSync(path.join(target, 'plexus-integration'))) {
+            return res.status(400).json({ error: 'no plexus-integration/ at the new path — that folder is not a brain' });
+        }
+        const reg = loadRegistry();
+        const proj = reg.projects.find(p => p.name === name);
+        if (!proj) return res.status(404).json({ error: 'project not in registry' });
+        backupRegistry(); // ~/.plexus/projects.json.bak — undo by hand if a repair was wrong
+        proj.path = target;
+        saveRegistry(reg);
+        writeProjectMcpJson(target); // the plug follows the project
+        res.json({ ok: true, name, path: target, note: 'registry backed up to projects.json.bak before the change' });
+    });
+
+    // ── Open a project DOOR (Integration v2): pre-bound Terminal window via the
+    // wrapper. Used by the card button AND offered by task_check mismatch replies. ──
+    app.post('/api/launcher/open-door', (req, res) => {
+        if (process.platform !== 'darwin') return res.json({ ok: false, error: 'door windows are macOS-only for now — use the connect code instead' });
+        const { name } = req.body || {};
+        const reg = loadRegistry();
+        const proj = reg.projects.find(p => p.name === name);
+        if (!proj) return res.status(404).json({ error: 'project not in registry' });
+        if (!fs.existsSync(proj.path)) return res.status(400).json({ error: `folder missing (${proj.path}) — repair via /api/launcher/relocate` });
+        const scpt = [
+            'tell application "Terminal"',
+            '\tactivate',
+            `\tdo script quoted form of ${JSON.stringify(SHIM_PATH)} & " work " & quoted form of ${JSON.stringify(proj.name)} & " --client claude"`,
+            '\ttry',
+            '\t\tset current settings of front window to settings set "Pro"',
+            '\tend try',
+            'end tell',
+        ].join('\n');
+        execFile('osascript', ['-e', scpt], { encoding: 'utf8', timeout: 15000 }, () => { /* fire-and-forget */ });
+        res.json({ ok: true, opened: proj.name, note: `Claude Code is starting in a Terminal window inside ${proj.name}.` });
     });
 
     // ── Onboarding (first-run wizard) ──
@@ -712,10 +776,17 @@ export function startLauncher(open = true) {
             }
             if (client === 'claude' && process.platform === 'darwin') {
                 // Don't just open a terminal — START Claude Code in the project folder.
+                // Integration v2: registered projects go through the DOOR (`plexus work`)
+                // so the session gets door provenance + the ⬡ terminal title; raw
+                // cd && claude stays as the fallback for unregistered paths.
+                const regEntry = loadRegistry().projects.find(p => path.resolve(p.path) === projectPath);
+                const doorLine = (regEntry && fs.existsSync(SHIM_PATH))
+                    ? `\tdo script quoted form of ${JSON.stringify(SHIM_PATH)} & " work " & quoted form of ${JSON.stringify(regEntry.name)} & " --client claude"`
+                    : `\tdo script "cd " & quoted form of ${JSON.stringify(projectPath)} & " && claude"`;
                 const scpt = [
                     'tell application "Terminal"',
                     '\tactivate',
-                    `\tdo script "cd " & quoted form of ${JSON.stringify(projectPath)} & " && claude"`,
+                    doorLine,
                     // Claude Code's TUI assumes a dark terminal; Terminal.app's default
                     // "Basic" profile is white and renders it as black blocks. Force the
                     // built-in dark "Pro" profile for this window (best-effort).

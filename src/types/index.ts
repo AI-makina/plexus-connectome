@@ -278,6 +278,11 @@ export interface AnalysisStatus {
 // Manifest types
 export interface PlexusManifest {
     plexus_version: string;
+    // Integration v2 identity stamps (backfilled on engine boot for older brains):
+    // brain_id changes when a brain is deleted+recreated (engine lifecycle guard);
+    // project_id is the stable door identity used by `plexus work` and launch auths.
+    brain_id?: string;
+    project_id?: string;
     target_app: {
         name: string;
         root_path: string;

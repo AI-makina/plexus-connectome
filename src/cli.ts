@@ -80,6 +80,16 @@ program
         fs.writeFileSync(path.join(integrationPath, 'amygdala-log.json'), JSON.stringify([], null, 2));
 
         console.log(`Plexus Integration created at ${integrationPath}`);
+
+        // Integration v2: the plug travels WITH the project — write the per-project
+        // Claude Code registration (merge-aware, backed up). Covers every init path:
+        // mcp init_project, launcher create/connect, manual `plexus init`.
+        const { writeProjectMcpJson } = require('./core/clientConfig');
+        const plug = writeProjectMcpJson(targetPath);
+        if (plug.error) console.warn(`⚠ project plug not written: ${plug.error}`);
+        else console.log(plug.wrote
+            ? `Project plug written: ${plug.file} — AI sessions opened in this folder (or any subfolder) load Plexus automatically`
+            : 'Project plug already present (.mcp.json)');
     });
 
 program
@@ -928,6 +938,134 @@ program
         for (const p of proposals.slice(0, 8)) {
             console.log(` · [${p.kind}] ${p.title || p.file || (p.files || []).join(' ⇄ ')}`);
         }
+    });
+
+// ─── Integration v2: the DOOR ─────────────────────────────────────────────────
+// `plexus work <name>` is the connect code: resolves the project from the
+// registry (survives renames/moves better than a raw path), moves INTO it, and
+// starts the AI there — with a one-use launch token so session_open records
+// door provenance. Paste in a terminal, never into an AI chat.
+program
+    .command('work <project>')
+    .description('Open an AI session inside a Plexus project (the door): registry lookup → cd → launch client with door provenance')
+    .option('--client <client>', 'AI client to launch (claude | codex | gemini)', 'claude')
+    .option('--print', 'Print the connect code for this project instead of launching')
+    .action((projectArg: string, options: any) => {
+        const { loadRegistry } = require('./core/registry');
+        const reg = loadRegistry();
+        const q = String(projectArg || '').trim().toLowerCase();
+        const manifestOf = (p: any) => { try { return JSON.parse(fs.readFileSync(path.join(p.path, 'plexus-integration', 'plexus-manifest.json'), 'utf8')); } catch { return null; } };
+        let matches = reg.projects.filter((p: any) => p.name.toLowerCase() === q);
+        if (matches.length === 0) matches = reg.projects.filter((p: any) => manifestOf(p)?.project_id === projectArg);
+        if (matches.length === 0 && q) matches = reg.projects.filter((p: any) => p.name.toLowerCase().includes(q));
+        if (matches.length === 0) {
+            console.error(`No registered project matches "${projectArg}". Known projects:`);
+            for (const p of reg.projects) console.error(`  · ${p.name} — ${p.path}`);
+            process.exit(1);
+        }
+        if (matches.length > 1) {
+            console.error(`"${projectArg}" is ambiguous — say which one:`);
+            for (const p of matches) console.error(`  · ${p.name} — ${p.path}`);
+            process.exit(1);
+        }
+        const proj = matches[0];
+        if (!fs.existsSync(proj.path)) {
+            console.error(`✗ ${proj.name} is registered at ${proj.path}, but that folder no longer exists.`);
+            console.error('  If the project moved: open the Plexus launcher and repair its path, then retry.');
+            process.exit(1);
+        }
+        if (!fs.existsSync(path.join(proj.path, 'plexus-integration'))) {
+            console.error(`✗ ${proj.path} exists but has no brain (plexus-integration/ missing).`);
+            process.exit(1);
+        }
+        if (options.print) {
+            const { workCommand } = require('./core/clientConfig');
+            console.log(workCommand(proj.name));
+            return;
+        }
+        const CLIENT_BINS: Record<string, string> = { claude: 'claude', codex: 'codex', gemini: 'gemini' };
+        const bin = CLIENT_BINS[String(options.client)] || String(options.client);
+        const projectId = manifestOf(proj)?.project_id || proj.path;
+        const { mintLaunchAuth } = require('./core/launchAuth');
+        const token = mintLaunchAuth(projectId);
+        // Terminal title on THIS Plexus-created terminal only — never a global setting.
+        try { process.stdout.write(`\x1b]0;⬡ Plexus — ${proj.name}\x07`); } catch { /* cosmetic */ }
+        console.log(`⬡ Plexus door → ${proj.name} (${proj.path})`);
+        const child = require('child_process').spawn(bin, [], {
+            cwd: proj.path, stdio: 'inherit',
+            env: { ...process.env, PLEXUS_LAUNCH_AUTH: token },
+        });
+        child.on('error', (err: any) => {
+            console.error(`✗ could not start "${bin}" — is it installed and on PATH? (${err.message})`);
+            console.error(`  Manual fallback: cd "${proj.path}" && ${bin}`);
+            process.exit(1);
+        });
+        child.on('exit', (code: number | null) => process.exit(code ?? 0));
+        for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, () => child.kill(sig));
+    });
+
+// ─── Integration v2: consent-based migration off user-scope registration ──────
+program
+    .command('migrate-registration')
+    .description('Move this machine to per-project plugs: back up ~/.claude.json, remove the user-scope plexus entry, write .mcp.json into every registered project')
+    .option('--undo', 'Restore the backups a previous run created')
+    .action((options: any) => {
+        const os = require('os');
+        const { execFileSync } = require('child_process');
+        const { loadRegistry } = require('./core/registry');
+        const { writeProjectMcpJson } = require('./core/clientConfig');
+        const claudeJson = path.join(os.homedir(), '.claude.json');
+        const backup = claudeJson + '.bak-plexus-v2';
+        const reg = loadRegistry();
+
+        if (options.undo) {
+            if (fs.existsSync(backup)) {
+                fs.copyFileSync(backup, claudeJson);
+                console.log(`Restored ~/.claude.json from ${backup}`);
+            } else console.log('No ~/.claude.json backup found — nothing to restore there.');
+            for (const p of reg.projects) {
+                const f = path.join(p.path, '.mcp.json');
+                const b = f + '.bak-plexus';
+                try {
+                    if (fs.existsSync(b)) { fs.copyFileSync(b, f); console.log(`Restored ${f}`); }
+                    else if (fs.existsSync(f)) {
+                        const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+                        const serverKeys = Object.keys(j?.mcpServers || {});
+                        if (serverKeys.length === 1 && serverKeys[0] === 'plexus' && Object.keys(j).length === 1) {
+                            fs.unlinkSync(f); console.log(`Removed ${f} (was created by the migration)`);
+                        } else console.log(`Left ${f} in place (contains non-plexus entries)`);
+                    }
+                } catch (e: any) { console.warn(`⚠ ${p.name}: ${e.message}`); }
+            }
+            return;
+        }
+
+        // 1. Back up ~/.claude.json ONCE — the first run's copy is the true pre-migration state.
+        if (fs.existsSync(claudeJson) && !fs.existsSync(backup)) {
+            fs.copyFileSync(claudeJson, backup);
+            console.log(`Backed up ~/.claude.json → ${backup}`);
+        }
+        // 2. Remove the user-scope entry via the client's own CLI; surgical JSON edit as fallback.
+        let removed = false;
+        try {
+            execFileSync('claude', ['mcp', 'remove', '-s', 'user', 'plexus'], { encoding: 'utf8', timeout: 15000 });
+            removed = true;
+        } catch {
+            try {
+                const j = JSON.parse(fs.readFileSync(claudeJson, 'utf8'));
+                if (j?.mcpServers?.plexus) { delete j.mcpServers.plexus; fs.writeFileSync(claudeJson, JSON.stringify(j, null, 2)); removed = true; }
+            } catch { /* nothing to remove */ }
+        }
+        console.log(removed ? '✓ user-scope plexus registration removed (no more global omnipresence)' : '· no user-scope plexus registration found (already migrated?)');
+        // 3. Per-project plugs for every registered project that still exists on disk.
+        for (const p of reg.projects) {
+            if (!fs.existsSync(p.path)) { console.warn(`⚠ ${p.name}: folder missing (${p.path}) — skipped; repair its path via the launcher`); continue; }
+            const r = writeProjectMcpJson(p.path);
+            console.log(r.error ? `⚠ ${p.name}: ${r.error}` : `✓ ${p.name}: ${r.wrote ? 'plug written' : 'plug already current'} (${r.file})`);
+        }
+        console.log('\nDone. Claude Code asks ONE-TIME approval per project for its .mcp.json on first open — choose to use it.');
+        console.log('Verify: `claude mcp list` inside a project shows plexus; in an unrelated folder it does not.');
+        console.log('Undo anytime: plexus migrate-registration --undo');
     });
 
 program

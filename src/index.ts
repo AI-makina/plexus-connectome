@@ -1,4 +1,4 @@
-import { app, setAnalyzerRef } from './api/server';
+import { app, setAnalyzerRef, sweepPendingTrust } from './api/server';
 import { initDb } from './db/sqlite';
 import { graph } from './core/graph';
 import { setContext, setManifest } from './core/context';
@@ -26,6 +26,17 @@ let manifest: PlexusManifest | null = null;
 if (fs.existsSync(manifestPath)) {
     manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     setManifest(manifest!);
+}
+
+// Integration v2 identity stamps (backfilled for pre-v2 brains):
+// brain_id guards the engine lifecycle (delete+recreate ⇒ new id ⇒ old engine
+// stands down); project_id is the stable door identity for `plexus work`.
+if (manifest) {
+    const { v4: uuidv4 } = require('uuid');
+    let dirty = false;
+    if (!manifest.brain_id) { manifest.brain_id = uuidv4(); dirty = true; }
+    if (!manifest.project_id) { manifest.project_id = uuidv4(); dirty = true; }
+    if (dirty) { try { fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2)); } catch { /* stamps retry next boot */ } }
 }
 
 // Read ports from manifest first, then env, then defaults
@@ -193,6 +204,41 @@ if (manifest?.analysis?.watch_for_changes !== false) {
     }, 5000);
     console.log('[Plexus Engine] Drift sweep active (5s fingerprint diff — out-of-band edits are absorbed automatically)');
 }
+
+// Lifecycle guard (Integration v2): if the brain this engine serves disappears
+// (project deleted) or is REPLACED (delete + re-create ⇒ different brain_id),
+// exit cleanly — but only after a persistent grace window, so transient
+// unmounts, iCloud eviction, or a mid-write manifest never kill a live brain.
+// This is what retires the zombie engines a delete/recreate cycle used to leave.
+const bootBrainId = manifest?.brain_id || null;
+let brainGoneChecks = 0;
+setInterval(() => {
+    let gone = false;
+    try {
+        if (!fs.existsSync(integrationPath)) gone = true;
+        else if (bootBrainId) {
+            const m = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+            if (m?.brain_id && m.brain_id !== bootBrainId) gone = true;
+        }
+    } catch { gone = true; } // unreadable counts toward the grace window, never instant death
+    brainGoneChecks = gone ? brainGoneChecks + 1 : 0;
+    if (brainGoneChecks >= 4) {
+        console.warn('[Plexus Engine] Brain gone or replaced (persistent ~2min) — shutting down cleanly.');
+        process.exit(0);
+    }
+}, 30000);
+
+// Quarantine sweep (evidence-trust plane): promote pending deposits the scanner
+// can confirm on disk; expire the 14-day stale ones. Every 2 minutes.
+setInterval(() => { try { sweepPendingTrust(); } catch { /* best-effort */ } }, 120000);
+
+// Publish this project's content-light identity (name + top terms) for other
+// engines' task_check relative matching. Refreshed at boot and every 10 min.
+try {
+    const { publishIdentity } = require('./core/intent');
+    publishIdentity(manifest?.project_id || null);
+    setInterval(() => { try { publishIdentity(manifest?.project_id || null); } catch { /* best-effort */ } }, 600000);
+} catch { /* identity publishing is optional */ }
 
 // Bind both servers. Wrapped so a self-restart (POST /api/engine/restart) can pass
 // PLEXUS_BOOT_DELAY_MS to the replacement child, which waits before binding so the

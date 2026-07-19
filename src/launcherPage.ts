@@ -330,6 +330,7 @@ async function loadProjects(){
       </div>
       <button onclick="resumeWith('\${esc(p.path)}')" title="open this project in your AI editor — it resumes the brain">Resume with AI</button>
       <button onclick="serveProject('\${esc(p.path)}', \${p.ws_port})">\${p.running?'Open brain':'Start + open'}</button>
+      <button class="ghost" title="Copy this project's connect code — paste it in a TERMINAL (not into an AI chat) and that terminal becomes this project's AI session, wherever it started." onclick="copyText(\\\`\${esc(p.connect_code||'')}\\\`, this)">connect code ⧉</button>
       <button class="ghost" title="Advanced: copy a command that PINS this one project to its own MCP entry. Not needed — once your AI is connected (top of page), every project is found by its folder." onclick="copyText(\\\`\${esc(p.mcp_command)}\\\`, this)">pin ⧉</button>
       <button class="ghost" onclick="forget('\${esc(p.path)}')">✕</button>
     </div>\`).join('');

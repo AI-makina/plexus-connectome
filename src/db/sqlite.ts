@@ -45,6 +45,12 @@ export function initDb(integrationPath: string): Database.Database {
   try { db.exec("ALTER TABLE nodes ADD COLUMN dormant_since TEXT"); } catch (e) { }
   try { db.exec("ALTER TABLE nodes ADD COLUMN was_connected_to TEXT"); } catch (e) { }
   try { db.exec("ALTER TABLE nodes ADD COLUMN code TEXT"); } catch (e) { }
+  // Integration v2 — evidence-trust plane: provenance + trust tier on canonical
+  // deposits. trust='pending' = quarantined (visible but unverified; excluded
+  // from canonical claim_check) until promoted by scan/review or auto-expired.
+  try { db.exec("ALTER TABLE nodes ADD COLUMN provenance_session TEXT"); } catch (e) { }
+  try { db.exec("ALTER TABLE nodes ADD COLUMN provenance_task TEXT"); } catch (e) { }
+  try { db.exec("ALTER TABLE nodes ADD COLUMN trust TEXT DEFAULT 'normal'"); } catch (e) { }
 
   // Synapses table
   db.exec(`
@@ -74,6 +80,9 @@ export function initDb(integrationPath: string): Database.Database {
   try { db.exec("ALTER TABLE synapses ADD COLUMN dormant_reason TEXT"); } catch (e) { }
   try { db.exec("ALTER TABLE synapses ADD COLUMN dormant_since TEXT"); } catch (e) { }
   try { db.exec("ALTER TABLE synapses ADD COLUMN code TEXT"); } catch (e) { }
+  try { db.exec("ALTER TABLE synapses ADD COLUMN provenance_session TEXT"); } catch (e) { }
+  try { db.exec("ALTER TABLE synapses ADD COLUMN provenance_task TEXT"); } catch (e) { }
+  try { db.exec("ALTER TABLE synapses ADD COLUMN trust TEXT DEFAULT 'normal'"); } catch (e) { }
 
   // Amygdala table
   db.exec(`
@@ -91,6 +100,9 @@ export function initDb(integrationPath: string): Database.Database {
       status TEXT NOT NULL
     );
   `);
+  try { db.exec("ALTER TABLE amygdala ADD COLUMN provenance_session TEXT"); } catch (e) { }
+  try { db.exec("ALTER TABLE amygdala ADD COLUMN provenance_task TEXT"); } catch (e) { }
+  try { db.exec("ALTER TABLE amygdala ADD COLUMN trust TEXT DEFAULT 'normal'"); } catch (e) { }
 
   // Snapshots table
   db.exec(`

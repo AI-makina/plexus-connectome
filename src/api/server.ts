@@ -17,8 +17,10 @@ import {
 import { checkClaims } from '../core/symbolIndex';
 import { buildBrief } from '../core/brief';
 import { familyOf } from '../core/families';
-import { issueReceipt } from '../core/receipts';
+import { issueReceipt, readReceipts } from '../core/receipts';
 import { getIntegrationPath, getManifest, getTargetPath, setManifest } from '../core/context';
+import { getDb } from '../db/sqlite';
+import { taskCheck } from '../core/intent';
 import {
     createResolution, getResolution, listResolutions, listPendingConfirmation,
     setResolutionStatus, confirmResolution, flagRegressionRisk, linkAmygdala, linkInvariant,
@@ -63,6 +65,90 @@ app.use(express.json());
 app.use(authMiddleware);
 
 const simulator = new ImpactSimulator();
+
+// ─── Integration v2: evidence-trust plane (provenance + quarantine) ───────────
+// Trust is computed at WRITE time for external deposits (MCP update_graph,
+// client apps). 'pending' = disconnected from evidence: no live receipts this
+// session AND no vocabulary linkage to the graph AND no file on disk (and not a
+// sanctioned planned/seed element). Pending deposits stay visible (unverified)
+// but never satisfy canonical claim_check; the sweep promotes them when the
+// scanner confirms their file on disk, and expires them after 14 days.
+const PENDING_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+function liveReceiptCount(): number {
+    // Only EVIDENCE receipts (consult / claim_check / simulate) vouch for a
+    // deposit — a passed task_check proves topical coherence, not that the
+    // deposit describes anything real.
+    try {
+        const now = Date.now();
+        return readReceipts(getIntegrationPath())
+            .filter((r: any) => r.kind !== 'task_check' && now - new Date(r.issued_at).getTime() < (r.ttl_ms || 0)).length;
+    } catch { return 0; }
+}
+function sessionFingerprint(): string {
+    try { return String(getSessionToken()).slice(0, 8); } catch { return 'unknown'; }
+}
+function currentTaskGroup(): string {
+    // Coarse task grouping for one-click revert: session × day.
+    return `${sessionFingerprint()}:${new Date().toISOString().slice(0, 10)}`;
+}
+function graphHasVocabOverlap(text: string): boolean {
+    const toks = String(text || '').toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length >= 3);
+    if (toks.length === 0) return false;
+    const set = new Set(toks);
+    let i = 0;
+    for (const n of graph.nodes.values()) {
+        if (i++ > 5000) break;
+        if (n.name.toLowerCase().split(/[^a-z0-9]+/).some(t => t.length >= 3 && set.has(t))) return true;
+    }
+    return false;
+}
+function fileExistsInProject(relPath: string | undefined): boolean {
+    if (!relPath) return false;
+    try { return fs.existsSync(path.join(getTargetPath(), String(relPath).replace(/^\.?\//, ''))); } catch { return false; }
+}
+function stampProvenance(table: 'nodes' | 'synapses' | 'amygdala', id: string, trust: 'normal' | 'pending') {
+    try {
+        getDb().prepare(`UPDATE ${table} SET provenance_session=?, provenance_task=?, trust=? WHERE id=?`)
+            .run(sessionFingerprint(), currentTaskGroup(), trust, id);
+    } catch { /* stamping is additive — never blocks the write itself */ }
+}
+export function sweepPendingTrust(): { promoted: number; expired: number } {
+    let promoted = 0, expired = 0;
+    try {
+        const db = getDb();
+        const now = Date.now();
+        for (const row of db.prepare("SELECT id, file_path, created_at FROM nodes WHERE trust='pending'").all() as any[]) {
+            if (fileExistsInProject(row.file_path)) {
+                db.prepare("UPDATE nodes SET trust='normal' WHERE id=?").run(row.id);
+                const n: any = graph.nodes.get(row.id); if (n) n.trust = 'normal';
+                promoted++;
+            } else if (row.created_at && now - new Date(row.created_at).getTime() > PENDING_TTL_MS) {
+                if (graph.deleteNode(row.id)) expired++;
+            }
+        }
+        for (const row of db.prepare("SELECT id, created_at FROM synapses WHERE trust='pending'").all() as any[]) {
+            const s: any = graph.synapses.get(row.id);
+            const endpointsNormal = s
+                && (graph.nodes.get(s.source_node_id) as any)?.trust !== 'pending'
+                && (graph.nodes.get(s.target_node_id) as any)?.trust !== 'pending';
+            if (endpointsNormal) {
+                db.prepare("UPDATE synapses SET trust='normal' WHERE id=?").run(row.id);
+                s.trust = 'normal'; promoted++;
+            } else if (row.created_at && now - new Date(row.created_at).getTime() > PENDING_TTL_MS) {
+                if (graph.deleteSynapse(row.id)) expired++;
+            }
+        }
+        for (const row of db.prepare("SELECT id, date_occurred FROM amygdala WHERE trust='pending'").all() as any[]) {
+            if (row.date_occurred && now - new Date(row.date_occurred).getTime() > PENDING_TTL_MS) {
+                db.prepare('DELETE FROM amygdala WHERE id=?').run(row.id);
+                graph.amygdala.delete(row.id);
+                expired++;
+            }
+        }
+    } catch { /* sweep is best-effort */ }
+    return { promoted, expired };
+}
 
 // ─── Session ─────────────────────────────────────────────────────
 // Local-only by construction: the server binds 127.0.0.1 and CORS blocks
@@ -162,9 +248,35 @@ app.post('/api/nodes', (req, res) => {
     // poison the graph maps (they used to mutate before the DB write threw).
     const v = validateAndBuildNode(req.body, 'command');
     if (!v.ok) return res.status(400).json({ error: 'invalid node', details: v.errors });
+    // Evidence-trust: a deposit must describe THIS project — outside-root paths
+    // belong in the other project's brain, not smuggled into this one.
+    const fp = String(v.value.file_path || '');
+    if (path.isAbsolute(fp)) {
+        const root = path.resolve(getTargetPath());
+        const abs = path.resolve(fp);
+        if (abs !== root && !abs.startsWith(root + path.sep)) {
+            return res.status(400).json({ error: `file_path is outside this project root (${fp}) — deposits about other projects belong in THEIR brain` });
+        }
+    }
+    if (fp.split(/[\\/]/).includes('..')) {
+        return res.status(400).json({ error: 'file_path may not escape the project root' });
+    }
     try {
+        // Trust must be computed BEFORE the node joins the graph (else it matches itself).
+        const trust: 'normal' | 'pending' =
+            (v.value.status === 'planned'
+                || fileExistsInProject(v.value.file_path)
+                || liveReceiptCount() > 0
+                || graphHasVocabOverlap(v.value.name + ' ' + (v.value.description || '')))
+                ? 'normal' : 'pending';
         graph.addNode(v.value);
-        res.json({ ...v.value, warnings: v.warnings.length ? v.warnings : undefined });
+        stampProvenance('nodes', v.value.id, trust);
+        (v.value as any).trust = trust;
+        res.json({
+            ...v.value, trust,
+            warnings: v.warnings.length ? v.warnings : undefined,
+            ...(trust === 'pending' ? { note: 'QUARANTINED (trust=pending): disconnected from evidence — visible but unverified; will not satisfy claim_check until promoted (file appears on disk, or review accepts it) and expires in 14 days.' } : {}),
+        });
     } catch (err: any) {
         res.status(500).json({ error: err.message });
     }
@@ -243,7 +355,13 @@ app.post('/api/synapses', (req, res) => {
     if (!v.ok) return res.status(400).json({ error: 'invalid synapse', details: v.errors });
     try {
         graph.addSynapse(v.value);
-        res.json({ ...v.value, warnings: v.warnings.length ? v.warnings : undefined });
+        // Evidence-trust: an edge is only as trustworthy as its endpoints.
+        const srcPending = ((graph.nodes.get(v.value.source_node_id) as any)?.trust === 'pending');
+        const tgtPending = ((graph.nodes.get(v.value.target_node_id) as any)?.trust === 'pending');
+        const trust: 'normal' | 'pending' = (srcPending || tgtPending) ? 'pending' : 'normal';
+        stampProvenance('synapses', v.value.id, trust);
+        (v.value as any).trust = trust;
+        res.json({ ...v.value, trust, warnings: v.warnings.length ? v.warnings : undefined });
     } catch (err: any) {
         res.status(500).json({ error: err.message });
     }
@@ -340,7 +458,17 @@ app.post('/api/amygdala', (req, res) => {
     if (!v.ok) return res.status(400).json({ error: 'invalid amygdala entry', details: v.errors });
     try {
         graph.addAmygdalaEntry(v.value);
-        res.json(v.value);
+        // Evidence-trust: threat memory bound to REAL graph nodes (or backed by a
+        // live consultation this session) is normal; free-floating entries wait.
+        const touched: string[] = [
+            ...(((v.value as any).attempted_change?.nodes_touched) || []),
+            ...((((v.value as any).prevention_rules) || []).flatMap((r: any) => r.trigger_nodes || [])),
+        ];
+        const linked = touched.some((id: string) => graph.nodes.has(id));
+        const trust: 'normal' | 'pending' = (linked || liveReceiptCount() > 0) ? 'normal' : 'pending';
+        stampProvenance('amygdala', (v.value as any).id, trust);
+        (v.value as any).trust = trust;
+        res.json({ ...(v.value as any), trust });
     } catch (err: any) {
         res.status(500).json({ error: err.message });
     }
@@ -541,6 +669,16 @@ app.post('/api/claim-check', (req, res) => {
     }
     try {
         const results = checkClaims(identifiers);
+        // Evidence-trust: QUARANTINED (pending) deposits must never confirm existence —
+        // that is the whole point of the quarantine.
+        for (const r of results as any[]) {
+            if (r.status !== 'exists' || !r.matches?.length) continue;
+            const allPending = r.matches.every((m: any) => (graph.nodes.get(m.node_id) as any)?.trust === 'pending');
+            if (allPending) {
+                r.status = 'pending';
+                r.note = 'matched only quarantined (unverified) deposits — do not rely on this identifier as existing';
+            }
+        }
         // Effectiveness dye — content-blind: record only STATUS + count per identifier,
         // never the identifier itself. missing = hallucination caught (value); out_of_scope
         // = the graph is blind to this symbol category (structure gap); exists = verified.
@@ -594,6 +732,88 @@ app.post('/api/consult', (req, res) => {
     } catch (err: any) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// ─── Integration v2: intent firewall (task_check) + quarantine review ────────
+
+app.post('/api/task-check', (req, res) => {
+    try {
+        const result = taskCheck({
+            task_summary: String(req.body?.task_summary || ''),
+            mentioned_paths: Array.isArray(req.body?.mentioned_paths) ? req.body.mentioned_paths : [],
+            mentioned_projects: Array.isArray(req.body?.mentioned_projects) ? req.body.mentioned_projects : [],
+            provenance: typeof req.body?.provenance === 'string' ? req.body.provenance : 'manual',
+        });
+        recordEff('value', 'task_check', { metric: result.verdict });
+        // A passed check is itself evidence of a coherent working session.
+        if (result.verdict === 'ok') { try { issueReceipt(getIntegrationPath(), 'task_check', []); } catch { /* optional */ } }
+        res.json(result);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/pending', (_req, res) => {
+    try {
+        const db = getDb();
+        const nodes = db.prepare("SELECT id, name, file_path, provenance_task, created_at FROM nodes WHERE trust='pending'").all();
+        const synapses = db.prepare("SELECT id, source_node_id, target_node_id, type, provenance_task FROM synapses WHERE trust='pending'").all();
+        const amygdala = db.prepare("SELECT id, title, provenance_task FROM amygdala WHERE trust='pending'").all();
+        res.json({ count: (nodes as any[]).length + (synapses as any[]).length + (amygdala as any[]).length, nodes, synapses, amygdala });
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/pending/accept', (req, res) => {
+    const ids: string[] = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    if (!ids.length) return res.status(400).json({ error: 'ids[] required' });
+    const db = getDb();
+    let accepted = 0;
+    for (const id of ids) {
+        for (const table of ['nodes', 'synapses', 'amygdala'] as const) {
+            const r = db.prepare(`UPDATE ${table} SET trust='normal' WHERE id=? AND trust='pending'`).run(id);
+            if (r.changes > 0) {
+                accepted++;
+                const obj: any = table === 'nodes' ? graph.nodes.get(id) : table === 'synapses' ? graph.synapses.get(id) : graph.amygdala.get(id);
+                if (obj) obj.trust = 'normal';
+            }
+        }
+    }
+    res.json({ accepted });
+});
+
+app.post('/api/pending/reject', (req, res) => {
+    const ids: string[] = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    if (!ids.length) return res.status(400).json({ error: 'ids[] required' });
+    const db = getDb();
+    let rejected = 0;
+    for (const id of ids) {
+        // Only quarantined deposits are deletable through this route — never canonical ones.
+        if (db.prepare("SELECT 1 FROM nodes WHERE id=? AND trust='pending'").get(id)) { if (graph.deleteNode(id)) rejected++; continue; }
+        if (db.prepare("SELECT 1 FROM synapses WHERE id=? AND trust='pending'").get(id)) { if (graph.deleteSynapse(id)) rejected++; continue; }
+        if (db.prepare("SELECT 1 FROM amygdala WHERE id=? AND trust='pending'").get(id)) {
+            db.prepare('DELETE FROM amygdala WHERE id=?').run(id);
+            graph.amygdala.delete(id);
+            rejected++;
+        }
+    }
+    res.json({ rejected });
+});
+
+app.post('/api/pending/revert-task', (req, res) => {
+    const task = String(req.body?.task || '');
+    if (!task) return res.status(400).json({ error: 'task required (provenance_task group)' });
+    const db = getDb();
+    let reverted = 0;
+    for (const row of db.prepare("SELECT id FROM synapses WHERE trust='pending' AND provenance_task=?").all(task) as any[]) { if (graph.deleteSynapse(row.id)) reverted++; }
+    for (const row of db.prepare("SELECT id FROM nodes WHERE trust='pending' AND provenance_task=?").all(task) as any[]) { if (graph.deleteNode(row.id)) reverted++; }
+    for (const row of db.prepare("SELECT id FROM amygdala WHERE trust='pending' AND provenance_task=?").all(task) as any[]) {
+        db.prepare('DELETE FROM amygdala WHERE id=?').run(row.id);
+        graph.amygdala.delete(row.id);
+        reverted++;
+    }
+    res.json({ reverted, task });
 });
 
 // ─── Activity pulse (the reassurance surface) ────────────────────

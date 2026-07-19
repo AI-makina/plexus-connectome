@@ -1,5 +1,16 @@
 [
   {
+    "date": "2026-07-18",
+    "title": "Integration v2 — Anchor + Door + Intent Firewall",
+    "notes": [
+      "Per-project connection: Plexus now lives only inside its projects (.mcp.json) — no more global presence in every AI session",
+      "Project doors: one-click Start AI + a copyable connect code (plexus work <name>) on every project card",
+      "Intent firewall: the AI checks that your request belongs to THIS project before its first write, and offers the right door if not",
+      "Evidence quarantine: unverified graph deposits wait in a pending tray instead of entering the brain (auto-promote / expire / one-click review)",
+      "Engines retire themselves when their project is deleted; projects-base guard asks before rooting a brain at your projects folder"
+    ]
+  },
+  {
     "date": "2026-07-12",
     "title": "Resolution lifecycle + self-update",
     "notes": [

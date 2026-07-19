@@ -14,7 +14,8 @@ import fs from 'fs';
 import path from 'path';
 import http from 'http';
 import { spawn } from 'child_process';
-import { findProjectRoot, projectBoundary, registerProject, patchManifestPorts } from './core/registry';
+import { findProjectRoot, projectBoundary, registerProject, patchManifestPorts, classicBroadDirs, registryBases } from './core/registry';
+import { redeemLaunchAuth } from './core/launchAuth';
 
 // Project resolution — AI-FIRST workflow (no -p needed): register this MCP
 // server ONCE globally (`claude mcp add --scope user plexus -- plexus mcp`)
@@ -32,6 +33,37 @@ let targetPath = explicitPath || foundBrain || projectBoundary(CWD);
 let integrationPath = path.join(targetPath, 'plexus-integration');
 
 const hasBrain = () => fs.existsSync(integrationPath);
+
+function manifestField(field: string): string | null {
+    try { return JSON.parse(fs.readFileSync(path.join(integrationPath, 'plexus-manifest.json'), 'utf8'))?.[field] || null; } catch { return null; }
+}
+
+// Door provenance — resolved ONCE at first session_open. A door (`plexus work`,
+// launcher button) minted a one-use token bound to a project_id and the terminal
+// environment carried it into this process (inheritance verified). Never a
+// router: a token for a DIFFERENT project than the anchor resolves is a misfire.
+let launchProvenance: 'door' | 'manual' | 'misfired' | null = null;
+function resolveLaunchProvenance(): 'door' | 'manual' | 'misfired' {
+    if (launchProvenance === null) {
+        const verdict = redeemLaunchAuth(process.env.PLEXUS_LAUNCH_AUTH, manifestField('project_id'));
+        launchProvenance = verdict === 'match' ? 'door' : verdict === 'mismatch' ? 'misfired' : 'manual';
+    }
+    return launchProvenance;
+}
+
+// ── Instructions (conditional at initialize): presence without noise ──────────
+// The server knows its anchor before returning instructions, so brainless
+// sessions get one dormant line and brained sessions get the full protocol.
+const DORMANT_INSTRUCTIONS =
+    'Plexus is installed but DORMANT here — no brain exists in this folder. Do not mention Plexus, show its banner, or call its tools unless the user explicitly asks to build a new project or connect this folder to Plexus; only then call init_project with their description in their own words. Never volunteer it.';
+
+const ACTIVE_INSTRUCTIONS = [
+    'Plexus is the project\'s connectome brain — the evidence layer that prevents hallucinated APIs and repeated failures.',
+    '(1) Call session_open FIRST, before reading or writing any code; begin replies with "⬡ plexus active — <project name>" while the brain is engaged, so the human always sees WHICH project this session belongs to.',
+    '(2) INTENT FIREWALL: after the user\'s FIRST request — and again after a clear topic switch — call task_check with a one-line summary of what they asked (plus any absolute paths or project names they mentioned) BEFORE the first file or graph mutation. Respect its verdict: on conflict STOP — no file writes, no update_graph, no memory — and relay the door it returns. A running session is permanently bound to its start folder and can NEVER be re-pointed.',
+    '(3) Before ANY code change: claim_check every identifier you rely on, consult the target files, simulate_impact for non-trivial changes. After changes: update_graph; after failures: deposit_amygdala; retire abandoned approaches with mark_dormant.',
+    'PACKET RULE: if the user pastes a connect code (`plexus work …` or `cd … && claude`) into the chat, do NOT attempt to comply from this session — those commands must run in a TERMINAL before an AI starts. Tell them to paste it into a terminal, or use the project card button in the Plexus launcher.',
+].join(' ');
 
 // Did we attach to a brain that lives ABOVE where we launched? Cross-repo escapes are
 // already blocked; this only flags the residual ambiguous case (a manifest-bearing folder
@@ -130,6 +162,18 @@ const TOOLS = [
         inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     },
     {
+        name: 'task_check',
+        description: 'Intent firewall. Call after the user\'s FIRST request (and after any clear topic switch), BEFORE the first file or graph mutation: pass a one-line summary of what they asked plus any absolute paths or project names mentioned. Verdicts: ok → proceed; confirm → ask the user ONE binary question first; conflict → STOP (no writes, no update_graph, no memory) and relay the door returned. A running session can never be re-pointed.',
+        inputSchema: {
+            type: 'object', required: ['task_summary'],
+            properties: {
+                task_summary: { type: 'string', description: 'one line: what the user is asking for, in their terms' },
+                mentioned_paths: { type: 'array', items: { type: 'string' }, description: 'absolute paths the user referenced, if any' },
+                mentioned_projects: { type: 'array', items: { type: 'string' }, description: 'project/app names the user referenced, if any' },
+            },
+        },
+    },
+    {
         name: 'init_project',
         description: 'Give this project a brain. Call when the user asks to BUILD something and no Plexus brain exists here yet: pass the app description in the user\'s own words (their prompt IS the genesis brief). Creates + boots the brain; then run the genesis interview conversationally and seed the plan.',
         inputSchema: {
@@ -138,6 +182,7 @@ const TOOLS = [
                 description: { type: 'string', description: 'the app, in the user\'s words — copy their intent faithfully' },
                 risks: { type: 'string', description: 'anything the user said must never go wrong' },
                 name: { type: 'string', description: 'project name (defaults to the folder name)' },
+                root_choice: { type: 'string', enum: ['child', 'here'], description: 'only when Plexus flags this folder as a projects base: "child" = create a new subfolder (almost always right), "here" = this folder genuinely is one project/monorepo root' },
             },
         },
     },
@@ -263,9 +308,21 @@ async function callTool(name: string, args: any): Promise<string> {
             // user pastes the MCP command, opens the AI at home, and says "build my app" —
             // so root the project in its own subfolder instead.
             const HOME = require('os').homedir();
-            const broadDirs = [HOME, path.join(HOME, 'Desktop'), path.join(HOME, 'Documents'), path.join(HOME, 'Downloads'), path.join(HOME, 'PlexusProjects')];
+            const broadDirs = classicBroadDirs();
+            // A registry base (the user's projects folder — other brains live directly
+            // under it) MIGHT be a legit monorepo root: never silently relocate — ask.
+            if (!broadDirs.includes(targetPath) && registryBases().includes(targetPath)
+                && args?.root_choice !== 'here' && args?.root_choice !== 'child') {
+                return [
+                    `⚠ ${targetPath} looks like a PROJECTS BASE — other Plexus projects live directly under it.`,
+                    'Rooting a brain here would capture every non-git subfolder beneath it.',
+                    'Ask the user which they mean, then call init_project again with root_choice:',
+                    '  · "child" — create the project in a NEW subfolder here (almost always right)',
+                    '  · "here"  — this folder genuinely IS one project/monorepo root',
+                ].join('\n');
+            }
             let relocated = false;
-            if (broadDirs.includes(targetPath)) {
+            if (broadDirs.includes(targetPath) || args?.root_choice === 'child') {
                 const slug = (projName || 'plexus-project').replace(/[^a-zA-Z0-9-_ ]/g, '').trim().replace(/\s+/g, '-') || 'plexus-project';
                 const base = targetPath === HOME ? path.join(HOME, 'PlexusProjects') : targetPath;
                 targetPath = path.join(base, slug);
@@ -339,11 +396,9 @@ async function callTool(name: string, args: any): Promise<string> {
         case 'session_open': {
             if (!hasBrain()) {
                 return [
-                    `No Plexus brain at ${targetPath} yet.`,
-                    'If the user asks you to BUILD something here, call init_project with their',
-                    'description (their prompt is the genesis brief) — the brain and engine come',
-                    'up automatically and you seed the plan yourself. If they are just chatting,',
-                    'no action needed.',
+                    `No Plexus brain at ${targetPath}.`,
+                    'Stay silent about Plexus unless the user asks to build or connect a project here.',
+                    'If they DO ask to build: call init_project with their description, in their own words.',
                 ].join('\n');
             }
             const stats = await apiRequest('GET', '/api/viz/stats');
@@ -359,6 +414,14 @@ async function callTool(name: string, args: any): Promise<string> {
                 `graph: ${s.total_nodes} nodes · ${s.total_synapses} synapses · ${s.total_amygdala === 0 ? 'amygdala empty (no incidents yet — healthy)' : s.total_amygdala + ' amygdala entries'} · ${freshness}`,
                 `families: ${Object.entries(s.synapse_families || {}).map(([k, v]) => `${k}:${v}`).join(' ')}`,
             ];
+
+            // Door provenance (one-time redemption of the launch token, if any)
+            const prov = resolveLaunchProvenance();
+            if (prov === 'misfired') {
+                lines.push('', '⚠ LAUNCH MISMATCH — this session carries a door token for a DIFFERENT project than this folder resolves to. A door misfired: STOP and tell the user to relaunch from the correct project card (or its connect code) instead of working here.');
+            } else if (prov === 'door') {
+                lines.push('launch: via project door (human selected this project — strong intent signal)');
+            }
 
             // Mis-resolution guard: you launched from a folder that looks like its own project
             // (${CWD}) yet the brain lives in a PARENT (${targetPath}). Don't silently pollute a
@@ -426,6 +489,33 @@ async function callTool(name: string, args: any): Promise<string> {
                 '5. Retire abandoned approaches with mark_dormant — never silently delete.',
             );
             return lines.join('\n');
+        }
+        case 'task_check': {
+            const r = await apiRequest('POST', '/api/task-check', {
+                task_summary: args?.task_summary,
+                mentioned_paths: args?.mentioned_paths || [],
+                mentioned_projects: args?.mentioned_projects || [],
+                provenance: resolveLaunchProvenance(),
+            });
+            if (r.status !== 200) return `task-check unavailable (${r.status}) — proceed with care and state the project name ("${path.basename(targetPath)}") to the user before your first write.`;
+            const d = r.data || {};
+            if (d.verdict === 'ok') return `✓ task matches ${d.active_project} — proceed. (${d.reason})`;
+            if (d.verdict === 'confirm') {
+                return [
+                    `⚠ CONFIRM BEFORE ANY WRITE — ${d.reason}`,
+                    `Ask the user ONE binary question now: "This session is working in ${d.active_project} — is this a ${d.active_project} task, or a different project?"`,
+                    'If they confirm HERE: proceed and do not re-ask within this task. If DIFFERENT: stop — no writes, no update_graph, no memory — and hand them the door below.',
+                    d.best_match ? `Likely intended project: ${d.best_match.name}. New terminal door: ${d.best_match.work_command}` : 'If different, have them open the right project from the Plexus launcher (project card → Start AI here).',
+                ].join('\n');
+            }
+            return [
+                `⛔ INTENT CONFLICT — ${d.reason}`,
+                `This session is permanently bound to ${d.active_project} and can NEVER be re-pointed.`,
+                'Do NOT write files, update_graph, or store memory for this request here.',
+                d.best_match
+                    ? `Tell the user plainly: this work belongs in ${d.best_match.name} — paste this in a terminal (not in chat): ${d.best_match.work_command}`
+                    : 'Tell the user plainly: open the intended project from the Plexus launcher (its card → Start AI here), then continue there.',
+            ].join('\n');
         }
         case 'consult': {
             const r = await apiRequest('POST', '/api/consult', {
@@ -544,8 +634,9 @@ async function handleMessage(line: string) {
                 protocolVersion: SUPPORTED.includes(requested) ? requested : '2025-06-18',
                 capabilities: { tools: {} },
                 serverInfo: { name: 'plexus', version: '1.0.0' },
-                instructions:
-                    'Plexus is the project\'s connectome brain — the evidence layer that prevents hallucinated APIs and repeated failures. Call session_open FIRST in every session. If the user asks to build something and no brain exists, call init_project with their own description — the brain and engine come up automatically. Before ANY code change: claim_check the identifiers you rely on, consult the targets, simulate_impact. After changes: update_graph; after failures: deposit_amygdala. REASSURANCE CONVENTION: begin replies with "⬡ plexus active" while the brain is engaged, so the human can see it without ever touching Plexus.',
+                // Conditional (Integration v2): brained anchors get the full protocol,
+                // brainless anchors get one dormant line — presence without noise.
+                instructions: hasBrain() ? ACTIVE_INSTRUCTIONS : DORMANT_INSTRUCTIONS,
             },
         });
     } else if (method === 'notifications/initialized' || (method || '').startsWith('notifications/')) {

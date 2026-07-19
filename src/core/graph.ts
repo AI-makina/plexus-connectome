@@ -41,7 +41,10 @@ class ConnectomeGraph {
                 metadata: JSON.parse(row.metadata),
                 tags: JSON.parse(row.tags),
                 health: JSON.parse(row.health),
-                position_3d: JSON.parse(row.position_3d)
+                position_3d: JSON.parse(row.position_3d),
+                // TEXT column carries a JSON array for dormant-marked nodes; leaving it a string
+                // poisons every consumer that calls .some()/.map() on it (v1.0.4 consult 500s).
+                was_connected_to: row.was_connected_to ? JSON.parse(row.was_connected_to) : undefined
             };
             this.nodes.set(node.id, node);
             this.adjacency.set(node.id, { out: [], in: [] });

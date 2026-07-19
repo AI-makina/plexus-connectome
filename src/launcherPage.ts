@@ -331,7 +331,7 @@ async function loadProjects(){
       <button onclick="resumeWith('\${esc(p.path)}')" title="open this project in your AI editor — it resumes the brain">Resume with AI</button>
       <button onclick="serveProject('\${esc(p.path)}', \${p.ws_port})">\${p.running?'Open brain':'Start + open'}</button>
       <button class="ghost" title="Copy this project's connect code — paste it in a TERMINAL (not into an AI chat) and that terminal becomes this project's AI session, wherever it started." onclick="copyText(\\\`\${esc(p.connect_code||'')}\\\`, this)">connect code ⧉</button>
-      <button class="ghost" onclick="forget('\${esc(p.path)}')">✕</button>
+      <button class="ghost" title="Remove from the launcher list (nothing on disk is touched) — asks to confirm, then offers Undo." onclick="askForget(this,'\${esc(p.path)}')">✕</button>
     </div>\`).join('');
   // Reassurance pulse: proof the AI is actually leaning on each brain
   for(const p of r.projects){
@@ -351,6 +351,20 @@ async function serveProject(p, uiPort){
   await fetch('/api/launcher/serve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p})});
   window.open('http://localhost:'+uiPort,'_blank');
   setTimeout(loadProjects,1200);
+}
+// Two-step confirm for ✕ (inline, no blocking browser dialog): the ✕ arms into
+// "forget ✓ / ✗ keep"; untouched for 6s it disarms itself. Confirming runs
+// forget(), which still offers the Undo toast afterwards — two layers of guard.
+function askForget(btn, p){
+  const yes=document.createElement('button'); yes.className='ghost'; yes.textContent='forget ✓';
+  yes.style.color='var(--coral)'; yes.style.borderColor='var(--coral)';
+  const cancel=document.createElement('button'); cancel.className='ghost'; cancel.textContent='✗ keep';
+  const disarm=()=>{ yes.remove(); cancel.remove(); btn.style.display=''; };
+  yes.onclick=()=>{ disarm(); forget(p); };
+  cancel.onclick=disarm;
+  btn.style.display='none';
+  btn.after(yes, cancel);
+  setTimeout(()=>{ if(document.body.contains(yes)) disarm(); }, 6000);
 }
 let LAST_FORGOTTEN=null, TOAST_TIMER=null;
 async function forget(p){

@@ -23,7 +23,7 @@ const LAUNCHER_PORT = parseInt(process.env.PLEXUS_LAUNCHER_PORT || '', 10) || 31
 const CLI = path.join(__dirname, 'cli.js');
 
 import { loadRegistry, saveRegistry, patchManifestPorts, backupRegistry } from './core/registry';
-import { writeProjectMcpJson, writeProjectTask, workCommand } from './core/clientConfig';
+import { writeProjectMcpJson, writeProjectTask, writeProjectEditorSettings, workCommand } from './core/clientConfig';
 
 function runCli(args: string[], cwd?: string): string {
     return execFileSync(process.execPath, [CLI, ...args], {
@@ -839,6 +839,7 @@ export function startLauncher(open = true) {
         const resolved = resolveAi(ai);
         if (resolved && 'error' in resolved) return { status: 400, body: { error: resolved.error } };
         const task = writeProjectTask(projectPath, resolved ? resolved.bin : null, resolved ? resolved.label : undefined);
+        writeProjectEditorSettings(projectPath); // terminal panel on the RIGHT by default (user's own setting always wins)
         try { // remember the choice → the card is one-click next time
             const reg = loadRegistry();
             const entry = reg.projects.find(p => path.resolve(p.path) === path.resolve(projectPath));

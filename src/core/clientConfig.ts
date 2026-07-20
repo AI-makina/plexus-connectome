@@ -72,6 +72,32 @@ export function writeProjectTask(projectPath: string, aiBin: string | null, aiLa
     }
 }
 
+/** Per-project editor defaults (<project>/.vscode/settings.json): terminal panel
+ *  on the RIGHT — the AI session sits beside the code instead of under it.
+ *  Merge-aware and deferential: only sets the key when the user hasn't; an
+ *  existing value (theirs) is never overridden. Applies to VS Code + forks. */
+export function writeProjectEditorSettings(projectPath: string): { wrote: boolean; file: string; error?: string } {
+    const dir = path.join(projectPath, '.vscode');
+    const file = path.join(dir, 'settings.json');
+    try {
+        let config: any = {};
+        if (fs.existsSync(file)) {
+            try { config = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; }
+            catch { return { wrote: false, file, error: 'settings.json exists but is not valid JSON — refusing to touch it' }; }
+        }
+        if (Object.prototype.hasOwnProperty.call(config, 'workbench.panel.defaultLocation')) {
+            return { wrote: false, file }; // the user's choice stands
+        }
+        fs.mkdirSync(dir, { recursive: true });
+        backupFile(file);
+        config['workbench.panel.defaultLocation'] = 'right';
+        fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
+        return { wrote: true, file };
+    } catch (e: any) {
+        return { wrote: false, file, error: e.message };
+    }
+}
+
 /** Write/refresh the Claude Code project plug (<project>/.mcp.json). Merge-aware, backed up, idempotent. */
 export function writeProjectMcpJson(projectPath: string): { wrote: boolean; file: string; error?: string } {
     const file = path.join(projectPath, '.mcp.json');

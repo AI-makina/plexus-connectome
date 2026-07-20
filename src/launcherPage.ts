@@ -570,7 +570,7 @@ function mcpStatusHtml(p){
   if(s==='approved') return 'AI connection: <b class="ok-j">approved ✓</b> · '+re;
   if(s==='approved_all') return 'AI connection: <b class="warn-a">approved — ALL future servers ⚠</b> · '+re+' <span class="ghosty">(re-arm to pick the narrower option)</span>';
   if(s==='declined') return 'AI connection: <b class="warn-a">declined ⚠</b> — sessions here run without Plexus · '+re;
-  if(s==='unasked') return 'AI connection: <span class="ghosty">awaiting first session — the question will appear</span>';
+  if(s==='unasked') return 'AI connection: <span class="ghosty">awaiting first session — the AI will ask to approve Plexus on first open</span>';
   return '';
 }
 function rearmMcp(el){

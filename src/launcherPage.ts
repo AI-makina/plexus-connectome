@@ -257,6 +257,8 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .mcpstat .ghosty{color:var(--ghost)}
   .rearm{color:var(--azure);cursor:pointer}
   .rearm:hover{color:var(--violet)}
+  .qmark{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid var(--line2);color:var(--lo);font:600 9px var(--mono);cursor:help;vertical-align:middle}
+  .qmark:hover{color:var(--ice);border-color:rgba(167,139,250,.55)}
 </style>
 </head>
 <body>
@@ -570,7 +572,7 @@ function mcpStatusHtml(p){
   if(s==='approved') return 'AI connection: <b class="ok-j">approved ✓</b> · '+re;
   if(s==='approved_all') return 'AI connection: <b class="warn-a">approved — ALL future servers ⚠</b> · '+re+' <span class="ghosty">(re-arm to pick the narrower option)</span>';
   if(s==='declined') return 'AI connection: <b class="warn-a">declined ⚠</b> — sessions here run without Plexus · '+re;
-  if(s==='unasked') return 'AI connection: <span class="ghosty">awaiting first session — the AI will ask to approve Plexus on first open</span>';
+  if(s==='unasked') return 'AI connection: <span class="qmark" title="Awaiting first session — the AI will ask to approve Plexus the first time you open this project. Choose &quot;Use this MCP server&quot;.">?</span>';
   return '';
 }
 function rearmMcp(el){

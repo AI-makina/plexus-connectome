@@ -30,6 +30,48 @@ function backupFile(file: string): void {
     try { if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak-plexus`); } catch { /* best-effort */ }
 }
 
+/** Write/refresh the auto-start task (<project>/.vscode/tasks.json): an automatic
+ *  ("runOn": "folderOpen") task that starts the chosen AI CLI in the editor's own
+ *  terminal the moment the project window opens — window + terminal + engaged AI
+ *  in one click. Merge-aware (only "Plexus — " tasks are ever touched), backed up.
+ *  aiBin=null removes the Plexus task (user chose "none"/built-in agent). */
+export function writeProjectTask(projectPath: string, aiBin: string | null, aiLabel?: string): { wrote: boolean; removed?: boolean; file: string; error?: string } {
+    const dir = path.join(projectPath, '.vscode');
+    const file = path.join(dir, 'tasks.json');
+    try {
+        let config: any = { version: '2.0.0', tasks: [] };
+        if (fs.existsSync(file)) {
+            try { config = JSON.parse(fs.readFileSync(file, 'utf8')) || config; }
+            catch { return { wrote: false, file, error: 'tasks.json exists but is not valid JSON — refusing to touch it' }; }
+        }
+        if (!Array.isArray(config.tasks)) config.tasks = [];
+        const before = config.tasks.length;
+        config.tasks = config.tasks.filter((t: any) => !(typeof t?.label === 'string' && t.label.startsWith('Plexus — ')));
+        const hadPlexusTask = config.tasks.length !== before;
+        if (!aiBin) {
+            if (!hadPlexusTask) return { wrote: false, file };
+            backupFile(file);
+            fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
+            return { wrote: true, removed: true, file };
+        }
+        fs.mkdirSync(dir, { recursive: true });
+        backupFile(file);
+        config.version = config.version || '2.0.0';
+        config.tasks.push({
+            label: `Plexus — start ${aiLabel || aiBin}`,
+            type: 'shell',
+            command: aiBin,
+            runOptions: { runOn: 'folderOpen' },
+            presentation: { echo: false, reveal: 'always', focus: true, panel: 'dedicated', showReuseMessage: false },
+            problemMatcher: [],
+        });
+        fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
+        return { wrote: true, file };
+    } catch (e: any) {
+        return { wrote: false, file, error: e.message };
+    }
+}
+
 /** Write/refresh the Claude Code project plug (<project>/.mcp.json). Merge-aware, backed up, idempotent. */
 export function writeProjectMcpJson(projectPath: string): { wrote: boolean; file: string; error?: string } {
     const file = path.join(projectPath, '.mcp.json');

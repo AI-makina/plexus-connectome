@@ -237,6 +237,13 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .g-item:last-of-type{border-bottom:none}
   .g-item .n{flex:none;width:22px;height:22px;border-radius:7px;background:var(--grad);color:#fff;font:600 11px var(--mono);display:flex;align-items:center;justify-content:center;margin-top:1px}
   .g-item b{color:var(--hi)}
+  .g-item .mono{font-size:11px;color:var(--ice)}
+  .menu-sec{font:600 9.5px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--lo);padding:7px 12px 2px}
+  /* Open-project picker rows: selected = violet ring; disabled = detected but not Plexus-capable */
+  .rm-clients button.sel{border-color:rgba(167,139,250,.65);box-shadow:0 0 16px rgba(139,92,246,.22)}
+  .rm-clients button.dis{opacity:.45;cursor:default}
+  .rm-clients button.dis:hover{border-color:var(--line2);box-shadow:none}
+  .rm-sub{float:right;font:10px var(--mono);color:var(--lo);margin-left:10px}
 </style>
 </head>
 <body>
@@ -312,14 +319,18 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
 </div>
 
 <!-- ── RESUME WITH AI (per project) ── -->
-<div class="modal" id="resume-modal">
+<div class="modal" id="resume-modal" onclick="if(event.target===this)closeResume()">
   <div class="modal-card">
-    <h3>Resume with AI</h3>
+    <h3>Open project</h3>
     <div class="rm-path" id="rm-path"></div>
-    <div class="rm-clients" id="rm-clients"></div>
+    <div class="opt-label">1 · Code editor</div>
+    <div class="rm-clients" id="rm-editors"><div class="hint">detecting editors…</div></div>
+    <div class="opt-label">2 · AI to engage</div>
+    <div class="rm-clients" id="rm-ais"></div>
+    <div style="text-align:center;margin:10px 0 4px"><button class="primary" id="rm-open" onclick="doOpenProject(this)">Open</button></div>
     <div class="cmd" id="rm-cmd" onclick="copyText(this.textContent,null)"></div>
-    <div class="hint" id="rm-note">Opens this project's folder in your editor — the AI resolves its brain and picks up where you left off.</div>
-    <div style="margin-top:14px;text-align:right"><button class="ghost" onclick="closeResume()">close</button></div>
+    <div class="hint" id="rm-note">A new editor window opens anchored to this Plexus project — your chosen AI starts automatically in its terminal.</div>
+    <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center"><span class="wiz-skip" onclick="rescanResume(this)">⌕ search again</span><button class="ghost" onclick="closeResume()">close</button></div>
   </div>
 </div>
 
@@ -329,25 +340,47 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <h3>Launch Guide</h3>
     <div class="g-sub">How projects, windows, and terminals connect.</div>
     <div class="g-rule"><b>The golden rule:</b> the folder a terminal is in when you <b>start</b> the AI decides everything — which Plexus project (if any) the session belongs to and which brain it loads. Move first, then start the AI. A running AI can never be re-pointed to another folder or project. And there is <b>nothing to install</b>: no AI is ever permanently connected to Plexus — every Plexus project carries its own connection inside its folder, and AIs opened anywhere else stay plexus-free.</div>
-    <div class="g-item"><span class="n">1</span><span><b>Opening a Plexus project — "Resume with AI".</b> Always opens the Plexus project in its own space, never inside an existing window. Pick an editor (VS&nbsp;Code, Cursor…) and you get a new editor window anchored to that Plexus project — every terminal you open inside that window starts linked to it automatically. Or pick your AI for the project and you get a Terminal window with that AI already running inside it.</span></div>
+    <div class="g-item"><span class="n">1</span><span><b>Opening a Plexus project — "Open project".</b> Always opens the Plexus project in its own editor window, never inside an existing window. Pick a detected code editor and the AI to engage: the window opens anchored to that Plexus project with a terminal already running your chosen AI (approve the editor's one-time trust question if it asks). Every terminal you open inside that window starts linked to the project automatically.</span></div>
     <div class="g-item"><span class="n">2</span><span><b>One window per Plexus project.</b> A window is not the same as a terminal: the window is the whole editor frame, and terminals are the command panels that run <b>inside</b> a window. Every Plexus project you open gets its <b>own</b> window — opening a second Plexus project never touches the first. Two projects side by side means two windows, each with its own brain, engine, and terminals, fully independent.</span></div>
     <div class="g-item"><span class="n">3</span><span><b>Working on Plexus project B from inside project A's window.</b> Open a new terminal there (it starts linked to A). Copy B's <b>connect code</b> from its card, paste it in the terminal <b>before engaging the AI</b> — the terminal moves to B and the AI starts already linked to B. Never paste a connect code into an AI chat: it only works in the terminal. When that AI exits, the terminal falls back to A — to return to B, paste the code again, always before engaging the AI.</span></div>
     <div class="g-item"><span class="n">4</span><span><b>Non-Plexus work from inside a Plexus project's window.</b> Open a new terminal (it starts linked to the Plexus project). <b>Before engaging the AI</b>, move the terminal out: type <span class="mono">cd&nbsp;</span>, paste your non-Plexus folder's path, press enter — then engage the AI. That folder must live <b>outside</b> the Plexus project's folder, because anything inside a Plexus project's folder is treated as part of that Plexus project. The window's sidebar will still show the Plexus project — only that terminal points elsewhere.</span></div>
     <div class="g-item"><span class="n">5</span><span><b>The first-time permission question.</b> The first time you engage an AI inside a Plexus project, it asks a single yes/no question: whether to use the Plexus connection it found in that project's folder. Approve it. It is asked once per project, never again — the only setup question you'll ever see.</span></div>
     <div class="g-item"><span class="n">6</span><span><b>Know which project a session belongs to.</b> Every AI session connected to a Plexus project begins its replies with the badge <span class="mono">⬡ plexus active — name</span>. One glance at any terminal tells you exactly which Plexus project it is working on. No badge means that session is not connected to any Plexus project.</span></div>
     <div class="g-item"><span class="n">7</span><span><b>If you ask for the wrong project.</b> If you start describing work that belongs to a different project while inside the wrong session, Plexus stops before anything is written and shows you how to open the right project instead. Nothing mixes silently.</span></div>
-    <div class="g-item"><span class="n">8</span><span><b>Coming back later.</b> To continue a Plexus project tomorrow — or after closing everything — open it the same way as the first time: click <b>Resume with AI</b> on its card, or paste its connect code in a fresh terminal before engaging the AI (codes never expire). The new session automatically finds the project's brain and memory, which live inside the project's folder, and picks up where the last session left off. You never re-explain anything.</span></div>
+    <div class="g-item"><span class="n">8</span><span><b>Coming back later.</b> To continue a Plexus project tomorrow — or after closing everything — open it the same way as the first time: click <b>Open project</b> on its card, or paste its connect code in a fresh terminal before engaging the AI (codes never expire). The new session automatically finds the project's brain and memory, which live inside the project's folder, and picks up where the last session left off. You never re-explain anything.</span></div>
     <div style="margin-top:14px;text-align:right"><button class="ghost" onclick="closeGuide()">close</button></div>
   </div>
 </div>
 
-<!-- ── DETECTED AI TOOLS (burger menu) ── -->
+<!-- ── MANAGE CONNECTIONS (burger menu) ── -->
 <div class="modal" id="tools-modal" onclick="if(event.target===this)closeTools()">
-  <div class="modal-card guide" style="max-width:520px">
-    <h3>AI tools on this Mac</h3>
-    <div class="g-sub">Informational only — Plexus never installs itself into an AI. Each Plexus project connects on its own, per project.</div>
-    <div id="tools-list"></div>
-    <div style="margin-top:14px;text-align:right"><button class="ghost" onclick="closeTools()">close</button></div>
+  <div class="modal-card guide" style="max-width:560px">
+    <h3>Manage connections</h3>
+    <div class="g-sub">Plexus never installs itself into an AI or an editor — each Plexus project connects on its own. This is where you see what's on this Mac and add new AI CLIs.</div>
+    <div class="opt-label">Code editors</div>
+    <div id="tools-editors"></div>
+    <div class="opt-label">AIs</div>
+    <div id="tools-ais"></div>
+    <div class="opt-label">Add an AI (any agent CLI on your PATH)</div>
+    <div class="row" style="margin:6px 0"><input type="text" id="addai-bin" placeholder="command, e.g. aider" style="max-width:160px"><input type="text" id="addai-label" placeholder="display name (optional)" style="max-width:180px"></div>
+    <label style="display:flex;align-items:center;gap:7px;margin:8px 0;text-transform:none;letter-spacing:0;font:12px var(--sans);color:var(--mid)"><input type="checkbox" id="addai-mcp"> MCP-capable — it reads the project's .mcp.json (required for Plexus work)</label>
+    <div class="row"><button class="primary" onclick="addCustomAi(this)">Add</button><span class="hint" id="addai-note"></span></div>
+    <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center"><span class="wiz-skip" onclick="rescanTools(this)">⌕ search again</span><button class="ghost" onclick="closeTools()">close</button></div>
+  </div>
+</div>
+
+<!-- ── AI GUIDELINES (burger menu) ── -->
+<div class="modal" id="aiguide-modal" onclick="if(event.target===this)closeAiGuide()">
+  <div class="modal-card guide">
+    <h3>AI Guidelines</h3>
+    <div class="g-sub">Which AIs can do Plexus work, and why.</div>
+    <div class="g-rule"><b>The rule:</b> only <b>MCP-capable</b> AIs can use a Plexus brain. MCP (Model Context Protocol) is the open standard an AI uses to talk to tools like Plexus — without it, an AI opened in a Plexus project works <b>blind</b>: no claim checks, no consultations, no memory, no protection. That defeats the purpose of Plexus, so non-MCP AIs are detected and listed, but never selectable for Plexus work.</div>
+    <div class="g-item"><span class="n">1</span><span><b>Plexus-ready today.</b> Claude Code connects to every Plexus project automatically — it reads the connection each project carries in its folder and asks your permission once per project.</span></div>
+    <div class="g-item"><span class="n">2</span><span><b>MCP-capable, coming soon.</b> Codex CLI and Gemini CLI speak MCP, but their automatic per-project connection is not wired yet. They show as detected and become selectable the moment their connection ships.</span></div>
+    <div class="g-item"><span class="n">3</span><span><b>Built-in editor agents.</b> Copilot, Cursor's agent, and Antigravity's agent live inside their editors and cannot be launched or paired from outside. Choose "None — just open the editor" and use them there. Their per-project Plexus connection also ships later.</span></div>
+    <div class="g-item"><span class="n">4</span><span><b>Adding a new or open-source AI.</b> Under ☰ → Manage connections, add any AI by its command name. Mark it MCP-capable only if it reads the project's <span class="mono">.mcp.json</span> — then it becomes selectable for Plexus work. Unmarked AIs stay listed but non-selectable.</span></div>
+    <div class="g-item"><span class="n">5</span><span><b>AIs are never "linked" to an editor.</b> AI CLIs are system-wide: any detected AI works with any editor, instantly — Plexus assembles the pairing fresh each time you open a project. Nothing to configure inside the editor's settings.</span></div>
+    <div style="margin-top:14px;text-align:right"><button class="ghost" onclick="closeAiGuide()">close</button></div>
   </div>
 </div>
 
@@ -360,8 +393,11 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
       <span class="burger-wrap">
         <span class="burger" onclick="toggleMenu(event)" title="menu">☰</span>
         <div class="menu" id="topmenu">
+          <div class="menu-sec">Guidelines</div>
           <div class="menu-item" onclick="openGuide()">Launch Guide</div>
-          <div class="menu-item" onclick="openTools()">Detected AI tools</div>
+          <div class="menu-item" onclick="openAiGuide()">AI Guidelines</div>
+          <div class="menu-sec">Connections</div>
+          <div class="menu-item" onclick="openTools()">Manage connections</div>
         </div>
       </span>
     </span>
@@ -432,6 +468,7 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','
 // home
 async function loadProjects(){
   const r = await fetch('/api/launcher/projects').then(x=>x.json());
+  PROJECTS = r.projects || [];
   document.getElementById('np-base').value ||= r.default_base;
   const el = document.getElementById('projects');
   if(!r.projects.length){el.innerHTML='<p class="hint">No brains yet — create or connect a project with the cards above; each one carries its own AI connection.</p>';return;}
@@ -444,7 +481,7 @@ async function loadProjects(){
         <div class="ports">api :\${p.api_port} · brain :\${p.ws_port}</div>
         <div class="ports" id="pulse-\${p.api_port}"></div>
       </div>
-      <button onclick="resumeWith('\${esc(p.path)}')" title="open this project in your AI editor — it resumes the brain">Resume with AI</button>
+      <button onclick="resumeWith('\${esc(p.path)}')" title="open this Plexus project in a code editor with your chosen AI already engaged">Open project</button>
       <button onclick="serveProject('\${esc(p.path)}', \${p.ws_port})">\${p.running?'Open brain':'Start + open'}</button>
       <button class="ghost" title="Copy this project's connect code — paste it in a TERMINAL (not into an AI chat) and that terminal becomes this project's AI session, wherever it started." onclick="copyText(\\\`\${esc(p.connect_code||'')}\\\`, this)">connect code ⧉</button>
       <button class="ghost" title="Remove from the launcher list (nothing on disk is touched) — asks to confirm, then offers Undo." onclick="askForget(this,'\${esc(p.path)}')">✕</button>
@@ -691,25 +728,10 @@ function loadWizClients(){
     .catch(function(){ document.getElementById('wiz-clients').innerHTML='<div class="hint">could not detect AI tools</div>'; });
 }
 
-// ── Post-create handoff: one-click "open your AI in this project" ──
-// The folder IS the pointer — the AI opened here resolves this brain automatically.
+// ── Post-create handoff: one button into the same Open-project picker ──
+// (editor + AI chosen there; the folder carries plug + brain + auto-start task)
 function openHereButtons(p, noteId){
-  var list = (INSTALLED||[]).filter(function(c){ return c.can_open_folder || c.id==='claude'; });
-  if(!list.length) return '<span class="hint">open a terminal in this folder and start your AI</span>';
-  return list.map(function(c){
-    var lbl = c.id==='claude' ? 'Start Claude Code here' : 'Open in '+esc(c.label);
-    return '<button data-p="'+esc(p)+'" data-c="'+esc(c.id)+'" data-n="'+esc(noteId)+'" onclick="openProjectIn(this)">'+lbl+'</button>';
-  }).join(' ');
-}
-function openProjectIn(btn){
-  var p=btn.getAttribute('data-p'), c=btn.getAttribute('data-c'), n=btn.getAttribute('data-n');
-  var orig=btn.textContent; btn.disabled=true; btn.textContent='opening…';
-  fetch('/api/launcher/open-editor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p,client:c})})
-    .then(function(x){return x.json();}).then(function(r){
-      btn.disabled=false; btn.textContent = r.ok ? 'opened ✓' : orig;
-      var note=document.getElementById(n);
-      if(note){ var h=''; if(r.note) h+='<div class="hint">'+esc(r.note)+'</div>'; if(r.command) h+='<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(r.command)+'</div>'; note.innerHTML=h; }
-    }).catch(function(){ btn.disabled=false; btn.textContent=orig; });
+  return '<button class="primary" data-p="'+esc(p)+'" onclick="resumeWith(this.getAttribute(\\'data-p\\'))">Open project</button>';
 }
 function connectedNote(){
   return '<div class="hint" style="margin:4px 0 10px">✓ This project carries its own Plexus connection — open your AI inside its folder and it finds the brain automatically (it asks your permission once, the first time). Just talk about your app.</div>';
@@ -730,39 +752,109 @@ function loadConnections(){
 function openTools(){
   document.getElementById('topmenu').classList.remove('show');
   document.getElementById('tools-modal').classList.add('show');
-  renderClients(document.getElementById('tools-list'));
+  renderTools(false);
 }
 function closeTools(){ document.getElementById('tools-modal').classList.remove('show'); }
+function openAiGuide(){ document.getElementById('topmenu').classList.remove('show'); document.getElementById('aiguide-modal').classList.add('show'); }
+function closeAiGuide(){ document.getElementById('aiguide-modal').classList.remove('show'); }
+function renderTools(force){
+  var eEl=document.getElementById('tools-editors'), aEl=document.getElementById('tools-ais');
+  eEl.innerHTML='<div class="hint">detecting…</div>'; aEl.innerHTML='';
+  fetch('/api/launcher/clients'+(force?'?force=1':'')).then(function(x){return x.json();}).then(function(r){
+    var cs=r.clients||[];
+    INSTALLED=cs.filter(function(c){return c.installed;});
+    var eds=cs.filter(function(c){return c.kind==='editor'&&c.installed;});
+    eEl.innerHTML=eds.length?eds.map(function(c){
+      return '<div class="clientrow"><div class="ci"><b>'+esc(c.label)+'</b><span class="c-state">detected</span>'+(c.hint?'<div class="c-hint">'+esc(c.hint)+'</div>':'')+'</div><span class="ok">✓</span></div>';
+    }).join(''):'<div class="hint">No code editors detected — install VS Code, Cursor, or Antigravity, then ⌕ search again.</div>';
+    var ais=cs.filter(function(c){return c.kind==='ai'&&(c.installed||c.custom);});
+    aEl.innerHTML=ais.length?ais.map(function(c){
+      var st=!c.installed?'not on PATH':(c.mcp&&c.project_wired?'Plexus-ready ✓':(c.mcp?'MCP — coming soon':'not MCP-capable'));
+      var right=c.custom?'<button class="ghost" data-bin="'+esc(c.id.slice(7))+'" onclick="removeCustomAi(this)">✕</button>':'<span class="ok">'+(c.mcp&&c.project_wired?'✓':'·')+'</span>';
+      return '<div class="clientrow"><div class="ci"><b>'+esc(c.label)+'</b><span class="c-state">'+st+'</span>'+(c.hint?'<div class="c-hint">'+esc(c.hint)+'</div>':'')+'</div>'+right+'</div>';
+    }).join(''):'<div class="hint">No AI CLIs detected yet.</div>';
+  }).catch(function(){ eEl.innerHTML='<div class="hint">detection failed — try ⌕ search again.</div>'; });
+}
+function rescanTools(el){ el.textContent='searching…'; renderTools(true); setTimeout(function(){el.textContent='⌕ search again';},1400); }
+function addCustomAi(btn){
+  var bin=document.getElementById('addai-bin').value.trim(), label=document.getElementById('addai-label').value.trim(), mcp=document.getElementById('addai-mcp').checked;
+  var note=document.getElementById('addai-note');
+  if(!bin){ note.textContent='enter the command name'; return; }
+  btn.disabled=true;
+  fetch('/api/launcher/custom-ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bin:bin,label:label,mcp:mcp})})
+    .then(function(x){return x.json();}).then(function(r){
+      btn.disabled=false;
+      if(r.ok){ note.textContent='added ✓'; document.getElementById('addai-bin').value=''; document.getElementById('addai-label').value=''; document.getElementById('addai-mcp').checked=false; renderTools(false); }
+      else note.textContent=r.error||'could not add';
+    }).catch(function(){ btn.disabled=false; note.textContent='could not add'; });
+}
+function removeCustomAi(btn){
+  fetch('/api/launcher/custom-ai/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bin:btn.getAttribute('data-bin')})})
+    .then(function(){ renderTools(false); }).catch(function(){});
+}
 function wizFinish(view){
   fetch('/api/launcher/onboarding/complete',{method:'POST'}).catch(function(){});
   document.getElementById('wizard').classList.remove('show');
   show(view || 'v-home');
 }
 
-// ── Resume with AI (per project) ──
-var RESUME_PATH = '';
+// ── Open project (per project: editor + AI picker) ──
+// ── Open project: two-step picker (editor → AI), remembered per project ──
+var PROJECTS=[];
+var RM={path:null, editor:null, ai:null};
 function resumeWith(pathStr){
-  RESUME_PATH = pathStr;
+  RM.path = pathStr;
+  var proj=null; for(var i=0;i<PROJECTS.length;i++){ if(PROJECTS[i].path===pathStr) proj=PROJECTS[i]; }
+  RM.editor = (proj && proj.preferred_editor) || null;
+  RM.ai = (proj && proj.preferred_ai) || null;
   document.getElementById('rm-path').textContent = pathStr;
-  document.getElementById('rm-cmd').textContent = 'cd "'+pathStr+'"';
-  document.getElementById('rm-note').textContent = "Opens this project's folder in your editor — the AI resolves its brain and picks up where you left off.";
+  document.getElementById('rm-cmd').textContent = (proj && proj.connect_code) || ('cd "'+pathStr+'"');
+  document.getElementById('rm-note').textContent = 'A new editor window opens anchored to this Plexus project — your chosen AI starts automatically in its terminal.';
   document.getElementById('resume-modal').classList.add('show');
-  var el = document.getElementById('rm-clients');
-  el.innerHTML = '<div class="hint">detecting editors…</div>';
-  fetch('/api/launcher/clients').then(function(x){return x.json();}).then(function(r){
-    var installed = (r.clients||[]).filter(function(c){return c.installed && (c.can_open_folder || c.id==='claude');});
-    var rows = installed.map(function(c){ return '<button onclick="openIn(\\''+c.id+'\\',this)">Open in '+esc(c.label)+'</button>'; }).join('');
-    el.innerHTML = (rows || '<div class="hint">No editors detected on PATH — use the command below.</div>') + '<button onclick="openIn(\\'folder\\',this)">Open folder</button>';
-  }).catch(function(){ el.innerHTML='<div class="hint">detection failed — use the command below.</div>'; });
+  renderResume(false);
 }
-function openIn(client, btn){
+function renderResume(force){
+  var eEl=document.getElementById('rm-editors'), aEl=document.getElementById('rm-ais');
+  eEl.innerHTML='<div class="hint">detecting…</div>'; aEl.innerHTML='';
+  fetch('/api/launcher/clients'+(force?'?force=1':'')).then(function(x){return x.json();}).then(function(r){
+    var cs=r.clients||[]; INSTALLED=cs.filter(function(c){return c.installed;});
+    var editors=cs.filter(function(c){return c.kind==='editor'&&c.installed;});
+    var ais=cs.filter(function(c){return c.kind==='ai'&&c.installed;});
+    if(!editors.length){
+      RM.editor=null;
+      eEl.innerHTML='<div class="hint">No code editors detected. Install VS Code, Cursor, or Antigravity, then ⌕ search again — or paste the connect code below in any terminal, before engaging the AI.</div>';
+    } else {
+      if(!RM.editor || !editors.some(function(c){return c.id===RM.editor;})) RM.editor=editors[0].id;
+      eEl.innerHTML=editors.map(function(c){
+        return '<button class="'+(RM.editor===c.id?'sel':'')+'" onclick="pickEditor(\\''+c.id+'\\')">'+esc(c.label)+(c.builtin_agent?'<span class="rm-sub">has a built-in agent</span>':'')+'</button>';
+      }).join('');
+    }
+    var rows='';
+    ais.forEach(function(c){
+      var ready=c.mcp&&c.project_wired;
+      if(ready){ rows+='<button class="'+(RM.ai===c.id?'sel':'')+'" onclick="pickAi(\\''+c.id+'\\')">'+esc(c.label)+'<span class="rm-sub">Plexus-ready ✓</span></button>'; }
+      else{ rows+='<button class="dis" disabled title="Only MCP-capable, Plexus-connected AIs can use the brain — see AI Guidelines (☰).">'+esc(c.label)+'<span class="rm-sub">'+(c.mcp?'MCP — coming soon':'not MCP-capable')+'</span></button>'; }
+    });
+    if(RM.ai!=='none' && !ais.some(function(c){return c.id===RM.ai&&c.mcp&&c.project_wired;})){
+      var first=ais.filter(function(c){return c.mcp&&c.project_wired;})[0];
+      RM.ai=first?first.id:'none';
+    }
+    rows+='<button class="'+(RM.ai==='none'?'sel':'')+'" onclick="pickAi(\\'none\\')">None — just open the editor<span class="rm-sub">use its built-in agent if it has one</span></button>';
+    aEl.innerHTML=rows;
+  }).catch(function(){ eEl.innerHTML='<div class="hint">detection failed — try ⌕ search again.</div>'; });
+}
+function pickEditor(id){ RM.editor=id; renderResume(false); }
+function pickAi(id){ RM.ai=id; renderResume(false); }
+function rescanResume(el){ el.textContent='searching…'; renderResume(true); setTimeout(function(){ el.textContent='⌕ search again'; }, 1400); }
+function doOpenProject(btn){
+  if(!RM.editor){ document.getElementById('rm-note').textContent='Pick a code editor first (install one if none are detected), or use the connect code below.'; return; }
   btn.disabled=true; var orig=btn.textContent; btn.textContent='opening…';
-  fetch('/api/launcher/open-editor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:RESUME_PATH,client:client})})
+  fetch('/api/launcher/open-editor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:RM.path,client:RM.editor,ai:RM.ai||'none'})})
     .then(function(x){return x.json();}).then(function(r){
-      btn.disabled=false;
+      btn.disabled=false; btn.textContent = r.ok ? 'opened ✓' : orig;
       if(r.command) document.getElementById('rm-cmd').textContent=r.command;
-      if(r.note) document.getElementById('rm-note').textContent=r.note;
-      btn.textContent = r.ok ? 'opened ✓' : orig;
+      var msg = r.error || r.note; if(msg) document.getElementById('rm-note').textContent=msg;
+      loadProjects();
     }).catch(function(){ btn.disabled=false; btn.textContent=orig; });
 }
 function closeResume(){ document.getElementById('resume-modal').classList.remove('show'); }

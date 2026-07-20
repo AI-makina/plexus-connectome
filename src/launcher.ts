@@ -23,7 +23,7 @@ const LAUNCHER_PORT = parseInt(process.env.PLEXUS_LAUNCHER_PORT || '', 10) || 31
 const CLI = path.join(__dirname, 'cli.js');
 
 import { loadRegistry, saveRegistry, patchManifestPorts, backupRegistry } from './core/registry';
-import { writeProjectMcpJson, workCommand } from './core/clientConfig';
+import { writeProjectMcpJson, writeProjectTask, workCommand } from './core/clientConfig';
 
 function runCli(args: string[], cwd?: string): string {
     return execFileSync(process.execPath, [CLI, ...args], {
@@ -139,7 +139,12 @@ function onPath(cmd: string): boolean {
 // folder (null = no folder CLI); app = macOS bundle (found even when the user never
 // installed the shell command); mcpConfig = the JSON file the client reads MCP servers
 // from (lets us introspect "already connected" AND tell the user exactly where to paste).
-interface AiClient { id: string; label: string; bin: string | null; openBin: string | null; app: string | null; bundleId?: string; mcpConfig?: string; hint?: string }
+// kind: 'editor' (opens project windows) | 'ai' (CLI agent, runs in ANY terminal —
+// never "linked" to an editor) | 'chat' (no folder concept; excluded from pickers).
+// mcp = speaks the Model Context Protocol; project_wired = actually loads THIS
+// project's plug today (.mcp.json). Only mcp && project_wired AIs are selectable
+// for Plexus work — anything else engages the project blind, defeating Plexus.
+interface AiClient { id: string; label: string; kind: 'editor' | 'ai' | 'chat'; mcp?: boolean; project_wired?: boolean; builtin_agent?: boolean; bin: string | null; openBin: string | null; app: string | null; bundleId?: string; mcpConfig?: string; hint?: string }
 const ANTIGRAVITY_MCP_CONFIG = path.join(os.homedir(), '.gemini', 'antigravity', 'mcp_config.json');
 const CLAUDE_DESKTOP_CONFIG = path.join(os.homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
 const VSCODE_MCP_CONFIG = path.join(os.homedir(), 'Library', 'Application Support', 'Code', 'User', 'mcp.json');
@@ -149,20 +154,20 @@ const GEMINI_MCP_CONFIG = path.join(os.homedir(), '.gemini', 'settings.json');
 // hint = who this plug actually serves. The rule users trip on: you connect the AI AGENT,
 // not the window it runs in — a CLI carries its own plug into any IDE's terminal.
 const AI_CLIENTS: AiClient[] = [
-    { id: 'claude', label: 'Claude Code', bin: 'claude', openBin: null, app: null,
-        hint: 'The claude CLI — one connect covers every terminal, including inside VS Code or Antigravity.' },
-    { id: 'antigravity', label: 'Antigravity', bin: 'antigravity', openBin: 'antigravity', app: '/Applications/Antigravity.app', bundleId: 'com.google.antigravity', mcpConfig: ANTIGRAVITY_MCP_CONFIG,
-        hint: 'Antigravity’s built-in agent only. CLIs in its terminal use their own connect.' },
-    { id: 'code', label: 'VS Code', bin: 'code', openBin: 'code', app: '/Applications/Visual Studio Code.app', bundleId: 'com.microsoft.VSCode', mcpConfig: VSCODE_MCP_CONFIG,
-        hint: 'VS Code’s built-in AI (Copilot agent mode) only — not needed for Claude Code in its terminal.' },
-    { id: 'cursor', label: 'Cursor', bin: 'cursor', openBin: 'cursor', app: '/Applications/Cursor.app', bundleId: 'com.todesktop.230313mzl4w4u92', mcpConfig: CURSOR_MCP_CONFIG,
-        hint: 'Cursor’s built-in agent.' },
-    { id: 'codex', label: 'Codex CLI', bin: 'codex', openBin: null, app: null, mcpConfig: CODEX_MCP_CONFIG,
-        hint: 'OpenAI’s codex CLI — one connect covers every terminal it runs in.' },
-    { id: 'gemini', label: 'Gemini CLI', bin: 'gemini', openBin: null, app: null, mcpConfig: GEMINI_MCP_CONFIG,
-        hint: 'Google’s gemini CLI — one connect covers every terminal it runs in.' },
-    { id: 'claude-desktop', label: 'Claude Desktop', bin: null, openBin: null, app: '/Applications/Claude.app', bundleId: 'com.anthropic.claudefordesktop', mcpConfig: CLAUDE_DESKTOP_CONFIG,
-        hint: 'The Claude chat app.' },
+    { id: 'claude', label: 'Claude Code', kind: 'ai', mcp: true, project_wired: true, bin: 'claude', openBin: null, app: null,
+        hint: 'MCP-capable and Plexus-ready — auto-connects to any Plexus project it opens in.' },
+    { id: 'antigravity', label: 'Antigravity', kind: 'editor', builtin_agent: true, bin: 'antigravity', openBin: 'antigravity', app: '/Applications/Antigravity.app', bundleId: 'com.google.antigravity', mcpConfig: ANTIGRAVITY_MCP_CONFIG,
+        hint: 'Editor with a built-in agent. Any AI CLI also runs in its terminal.' },
+    { id: 'code', label: 'VS Code', kind: 'editor', builtin_agent: true, bin: 'code', openBin: 'code', app: '/Applications/Visual Studio Code.app', bundleId: 'com.microsoft.VSCode', mcpConfig: VSCODE_MCP_CONFIG,
+        hint: 'Editor (built-in Copilot agent). Any AI CLI also runs in its terminal.' },
+    { id: 'cursor', label: 'Cursor', kind: 'editor', builtin_agent: true, bin: 'cursor', openBin: 'cursor', app: '/Applications/Cursor.app', bundleId: 'com.todesktop.230313mzl4w4u92', mcpConfig: CURSOR_MCP_CONFIG,
+        hint: 'Editor with a built-in agent. Any AI CLI also runs in its terminal.' },
+    { id: 'codex', label: 'Codex CLI', kind: 'ai', mcp: true, project_wired: false, bin: 'codex', openBin: null, app: null, mcpConfig: CODEX_MCP_CONFIG,
+        hint: 'MCP-capable — automatic per-project Plexus connection for this AI is coming soon.' },
+    { id: 'gemini', label: 'Gemini CLI', kind: 'ai', mcp: true, project_wired: false, bin: 'gemini', openBin: null, app: null, mcpConfig: GEMINI_MCP_CONFIG,
+        hint: 'MCP-capable — automatic per-project Plexus connection for this AI is coming soon.' },
+    { id: 'claude-desktop', label: 'Claude Desktop', kind: 'chat', bin: null, openBin: null, app: '/Applications/Claude.app', bundleId: 'com.anthropic.claudefordesktop', mcpConfig: CLAUDE_DESKTOP_CONFIG,
+        hint: 'Chat app — no project folders, so it cannot do Plexus project work.' },
 ];
 
 // Where the client's app actually lives: the conventional /Applications path, else a
@@ -218,7 +223,19 @@ async function detectClients(force = false): Promise<any[]> {
         } else if (installed && c.mcpConfig) {
             connected = mcpConfigHasPlexus(c.mcpConfig); // Antigravity / Claude Desktop
         }
-        clients.push({ id: c.id, label: c.label, installed, can_open_folder: !!c.openBin, connected, hint: c.hint });
+        clients.push({ id: c.id, label: c.label, kind: c.kind, mcp: !!c.mcp, project_wired: !!c.project_wired, builtin_agent: !!c.builtin_agent, installed, can_open_folder: !!c.openBin, connected, hint: c.hint });
+    }
+    // User-added AI CLIs (Manage connections → "Add an AI"): any command on PATH.
+    // mcp flag = the user attests it reads the project's .mcp.json — only then is
+    // it selectable for Plexus work; otherwise it is detected but non-selectable.
+    for (const c of (loadPrefs().custom_ais || [])) {
+        clients.push({
+            id: 'custom:' + c.bin, label: c.label || c.bin, kind: 'ai', custom: true,
+            mcp: !!c.mcp, project_wired: !!c.mcp, installed: onPath(c.bin), can_open_folder: false,
+            hint: c.mcp
+                ? 'Custom AI — marked MCP-capable (reads the project .mcp.json), so it can use the Plexus brain.'
+                : 'Custom AI — not MCP-capable: it can run in a project folder but cannot use the Plexus brain.',
+        });
     }
     clientsCache = { at: Date.now(), clients };
     return clients;
@@ -675,26 +692,23 @@ export function startLauncher(open = true) {
         res.json({ ok: true, name, path: target, note: 'registry backed up to projects.json.bak before the change' });
     });
 
-    // ── Open a project DOOR (Integration v2): pre-bound Terminal window via the
-    // wrapper. Used by the card button AND offered by task_check mismatch replies. ──
+    // ── Open a project DOOR (Integration v2): the project's editor window with
+    // its preferred AI auto-engaged. Used by task_check mismatch recovery ("open
+    // the right project"). Falls back to the connect code when no editor exists. ──
     app.post('/api/launcher/open-door', (req, res) => {
-        if (process.platform !== 'darwin') return res.json({ ok: false, error: 'door windows are macOS-only for now — use the connect code instead' });
         const { name } = req.body || {};
         const reg = loadRegistry();
         const proj = reg.projects.find(p => p.name === name);
         if (!proj) return res.status(404).json({ error: 'project not in registry' });
         if (!fs.existsSync(proj.path)) return res.status(400).json({ error: `folder missing (${proj.path}) — repair via /api/launcher/relocate` });
-        const scpt = [
-            'tell application "Terminal"',
-            '\tactivate',
-            `\tdo script quoted form of ${JSON.stringify(SHIM_PATH)} & " work " & quoted form of ${JSON.stringify(proj.name)} & " --client claude"`,
-            '\ttry',
-            '\t\tset current settings of front window to settings set "Pro"',
-            '\tend try',
-            'end tell',
-        ].join('\n');
-        execFile('osascript', ['-e', scpt], { encoding: 'utf8', timeout: 15000 }, () => { /* fire-and-forget */ });
-        res.json({ ok: true, opened: proj.name, note: `Claude Code is starting in a Terminal window inside ${proj.name}.` });
+        const editor = proj.preferred_editor
+            || AI_CLIENTS.find(c => c.kind === 'editor' && clientInstalled(c))?.id;
+        if (!editor) {
+            return res.json({ ok: false, error: 'no code editor detected on this Mac', connect_code: workCommand(proj.name), note: 'Paste the connect code in a terminal (before engaging the AI) instead.' });
+        }
+        const ai = proj.preferred_ai || (onPath('claude') ? 'claude' : 'none');
+        const r = openProject(path.resolve(proj.path), editor, ai);
+        res.status(r.status).json({ ...r.body, project: proj.name });
     });
 
     // ── Onboarding (first-run wizard) ──
@@ -711,7 +725,37 @@ export function startLauncher(open = true) {
 
     // ── AI clients: which are installed + (Claude Code only) is Plexus already connected ──
     app.get('/api/launcher/clients', async (_req, res) => {
-        res.json({ clients: await detectClients() });
+        res.json({ clients: await detectClients(String((_req as any).query?.force || '') === '1') });
+    });
+
+    // ── Custom AI CLIs (Manage connections → "Add an AI") ──────────────────────
+    // Any agent CLI on PATH can be registered by command name — covering newly
+    // installed / open-source AIs without touching any editor's settings. The
+    // mcp flag is the user's attestation that it reads the project's .mcp.json.
+    app.post('/api/launcher/custom-ai', (req, res) => {
+        const bin = String(req.body?.bin || '').trim();
+        const label = String(req.body?.label || '').trim();
+        const mcp = !!req.body?.mcp;
+        if (!/^[A-Za-z0-9._\/-]+$/.test(bin)) {
+            return res.status(400).json({ error: 'command may only contain letters, digits, dot, dash, underscore, slash' });
+        }
+        if (!onPath(bin)) {
+            return res.status(400).json({ error: `"${bin}" is not on PATH — install it first, then add it here` });
+        }
+        const p = loadPrefs();
+        p.custom_ais = (p.custom_ais || []).filter((c: any) => c.bin !== bin);
+        p.custom_ais.push({ bin, label: label || bin, mcp });
+        savePrefs(p);
+        clientsCache = null;
+        res.json({ ok: true, bin, mcp });
+    });
+    app.post('/api/launcher/custom-ai/remove', (req, res) => {
+        const bin = String(req.body?.bin || '').trim();
+        const p = loadPrefs();
+        p.custom_ais = (p.custom_ais || []).filter((c: any) => c.bin !== bin);
+        savePrefs(p);
+        clientsCache = null;
+        res.json({ ok: true });
     });
 
     // ── (Integration v2) Global registration REMOVED. Plexus connects per
@@ -724,74 +768,103 @@ export function startLauncher(open = true) {
         });
     });
 
-    // ── Resume: open a project folder in an editor, or hand back a `cd` command ──
-    app.post('/api/launcher/open-editor', (req, res) => {
-        const projectPath = path.resolve(String(req.body?.path || ''));
-        const client = String(req.body?.client || '');
-        if (!fs.existsSync(projectPath)) return res.status(404).json({ error: 'folder not found' });
-        const resumeCmd = `cd "${projectPath}"`;
-        const spec = AI_CLIENTS.find(c => c.id === client);
-        try {
-            if (spec?.openBin && onPath(spec.openBin)) { // VS Code / Cursor — open the folder
-                spawn(spec.openBin, [projectPath], { detached: true, stdio: 'ignore' }).unref();
-                return res.json({ ok: true, opened: spec.label });
-            }
-            const appPath = spec?.openBin && process.platform === 'darwin' ? findAppPath(spec) : null;
-            if (appPath) {
-                // editor installed but its shell command isn't — open the bundle directly
-                // (wherever it lives, incl. ~/Downloads via the Spotlight lookup)
-                spawn('open', ['-a', appPath, projectPath], { detached: true, stdio: 'ignore' }).unref();
-                // macOS won't launch a second instance of the same app: if another COPY is
-                // already running (e.g. an old translocated Downloads build), the folder is
-                // delivered to THAT instance — often invisibly. Say so instead of lying "ok".
-                let note: string | undefined;
-                try {
-                    const base = path.basename(appPath);
-                    const psOut = execFileSync('ps', ['-axo', 'command'], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
-                    const line = psOut.split('\n').find(l => l.includes(`/${base}/Contents/MacOS/`));
-                    if (line) {
-                        const m = line.match(new RegExp(`(/.*?/${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})/Contents/MacOS/`));
-                        const runningApp = m ? m[1] : null;
-                        if (runningApp && path.resolve(runningApp) !== path.resolve(appPath)) {
-                            note = `${spec!.label} is already running from a different copy — the folder was sent to that instance (its window may be behind others). Quit ${spec!.label} and reopen to switch to the ${appPath} install.`;
-                        }
-                    }
-                } catch { /* diagnostics only */ }
-                return res.json({ ok: true, opened: spec!.label, note });
-            }
-            if (client === 'folder') { // reveal in Finder / Explorer
-                const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
-                spawn(opener, [projectPath], { detached: true, stdio: 'ignore' }).unref();
-                return res.json({ ok: true, opened: 'folder' });
-            }
-            if (client === 'claude' && process.platform === 'darwin') {
-                // Don't just open a terminal — START Claude Code in the project folder.
-                // Integration v2: registered projects go through the DOOR (`plexus work`)
-                // so the session gets door provenance + the ⬡ terminal title; raw
-                // cd && claude stays as the fallback for unregistered paths.
-                const regEntry = loadRegistry().projects.find(p => path.resolve(p.path) === projectPath);
-                const doorLine = (regEntry && fs.existsSync(SHIM_PATH))
-                    ? `\tdo script quoted form of ${JSON.stringify(SHIM_PATH)} & " work " & quoted form of ${JSON.stringify(regEntry.name)} & " --client claude"`
-                    : `\tdo script "cd " & quoted form of ${JSON.stringify(projectPath)} & " && claude"`;
-                const scpt = [
-                    'tell application "Terminal"',
-                    '\tactivate',
-                    doorLine,
-                    // Claude Code's TUI assumes a dark terminal; Terminal.app's default
-                    // "Basic" profile is white and renders it as black blocks. Force the
-                    // built-in dark "Pro" profile for this window (best-effort).
-                    '\ttry',
-                    '\t\tset current settings of front window to settings set "Pro"',
-                    '\tend try',
-                    'end tell',
-                ].join('\n');
-                execFile('osascript', ['-e', scpt], { encoding: 'utf8', timeout: 15000 }, () => { /* fire-and-forget */ });
-                return res.json({ ok: true, opened: 'Claude Code', note: 'Claude Code is starting in a Terminal window at this project — just talk about your app there.' });
-            }
-        } catch (err: any) {
-            return res.json({ ok: false, error: err.message, command: resumeCmd });
+    // ── Open project (Integration v2): editor window + auto-engaged AI ─────────
+    // Editors only — the Terminal.app path is gone (TUI color artifacts, a window
+    // orphaned from the files, an extra automation prompt). The chosen AI starts
+    // automatically inside the editor via a "runOn: folderOpen" task, so one
+    // click yields window + terminal + engaged AI.
+
+    function launchEditor(projectPath: string, clientId: string): { ok: boolean; opened?: string; note?: string; error?: string } {
+        const spec = AI_CLIENTS.find(c => c.id === clientId && c.kind === 'editor');
+        if (!spec) return { ok: false, error: `unknown editor "${clientId}"` };
+        if (spec.openBin && onPath(spec.openBin)) {
+            spawn(spec.openBin, [projectPath], { detached: true, stdio: 'ignore' }).unref();
+            return { ok: true, opened: spec.label };
         }
-        res.json({ ok: false, terminal: true, command: resumeCmd, note: 'Open a terminal here, then start your AI.' });
+        const appPath = spec.openBin && process.platform === 'darwin' ? findAppPath(spec) : null;
+        if (appPath) {
+            // editor installed but its shell command isn't — open the bundle directly
+            // (wherever it lives, incl. ~/Downloads via the Spotlight lookup)
+            spawn('open', ['-a', appPath, projectPath], { detached: true, stdio: 'ignore' }).unref();
+            // macOS won't launch a second instance of the same app: if another COPY is
+            // already running (e.g. an old translocated Downloads build), the folder is
+            // delivered to THAT instance — often invisibly. Say so instead of lying "ok".
+            let note: string | undefined;
+            try {
+                const base = path.basename(appPath);
+                const psOut = execFileSync('ps', ['-axo', 'command'], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+                const line = psOut.split('\n').find(l => l.includes(`/${base}/Contents/MacOS/`));
+                if (line) {
+                    const m = line.match(new RegExp(`(/.*?/${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})/Contents/MacOS/`));
+                    const runningApp = m ? m[1] : null;
+                    if (runningApp && path.resolve(runningApp) !== path.resolve(appPath)) {
+                        note = `${spec.label} is already running from a different copy — the folder was sent to that instance (its window may be behind others). Quit ${spec.label} and reopen to switch to the ${appPath} install.`;
+                    }
+                }
+            } catch { /* diagnostics only */ }
+            return { ok: true, opened: spec.label, note };
+        }
+        return { ok: false, error: `${spec.label} is installed but its open-folder command is unavailable` };
+    }
+
+    // Resolve an AI-picker choice into a launchable, Plexus-capable CLI.
+    // Only mcp && project_wired AIs pass — anything else would open the project
+    // blind (no brain), which defeats the purpose of a Plexus project.
+    function resolveAi(ai: string): { bin: string; label: string } | { error: string } | null {
+        if (!ai || ai === 'none' || ai === 'builtin') return null;
+        const roster = AI_CLIENTS.find(c => c.id === ai && c.kind === 'ai');
+        if (roster) {
+            if (!roster.mcp || !roster.project_wired) return { error: `${roster.label} cannot use the Plexus brain yet — pick a Plexus-ready AI or "none"` };
+            if (!roster.bin || !onPath(roster.bin)) return { error: `${roster.label} is not installed on PATH` };
+            return { bin: roster.bin, label: roster.label };
+        }
+        if (ai.startsWith('custom:')) {
+            const c = (loadPrefs().custom_ais || []).find((x: any) => 'custom:' + x.bin === ai);
+            if (!c) return { error: 'unknown custom AI — add it under Manage connections first' };
+            if (!c.mcp) return { error: `${c.label || c.bin} is not marked MCP-capable — it cannot use the Plexus brain` };
+            if (!onPath(c.bin)) return { error: `"${c.bin}" is not on PATH` };
+            return { bin: c.bin, label: c.label || c.bin };
+        }
+        return { error: `unknown AI "${ai}"` };
+    }
+
+    function openProject(projectPath: string, client: string, ai: string): { status: number; body: any } {
+        const resumeCmd = `cd "${projectPath}"`;
+        if (!fs.existsSync(projectPath)) return { status: 404, body: { error: 'folder not found' } };
+        if (client === 'folder') { // reveal in Finder / Explorer
+            const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+            spawn(opener, [projectPath], { detached: true, stdio: 'ignore' }).unref();
+            return { status: 200, body: { ok: true, opened: 'folder' } };
+        }
+        const resolved = resolveAi(ai);
+        if (resolved && 'error' in resolved) return { status: 400, body: { error: resolved.error } };
+        const task = writeProjectTask(projectPath, resolved ? resolved.bin : null, resolved ? resolved.label : undefined);
+        try { // remember the choice → the card is one-click next time
+            const reg = loadRegistry();
+            const entry = reg.projects.find(p => path.resolve(p.path) === path.resolve(projectPath));
+            if (entry) { entry.preferred_editor = client; entry.preferred_ai = resolved ? ai : 'none'; saveRegistry(reg); }
+        } catch { /* preference is a nicety */ }
+        try {
+            const r = launchEditor(projectPath, client);
+            if (!r.ok) return { status: 200, body: { ok: false, error: r.error, command: resumeCmd, note: 'Open a terminal here, then start your AI.' } };
+            const taskNote = task.error
+                ? `Auto-start not set: ${task.error}`
+                : resolved
+                    ? `${resolved.label} starts automatically in the window's terminal — if the editor asks its one-time trust / automatic-tasks question, approve it.`
+                    : (task.removed ? 'Auto-start removed — the window opens plain.' : '');
+            return { status: 200, body: { ok: true, opened: r.opened, note: [r.note, taskNote].filter(Boolean).join(' ') || undefined } };
+        } catch (err: any) {
+            return { status: 200, body: { ok: false, error: err.message, command: resumeCmd } };
+        }
+    }
+
+    app.post('/api/launcher/open-editor', (req, res) => {
+        const r = openProject(
+            path.resolve(String(req.body?.path || '')),
+            String(req.body?.client || ''),
+            String(req.body?.ai || 'none'),
+        );
+        res.status(r.status).json(r.body);
     });
 
     app.listen(LAUNCHER_PORT, '127.0.0.1', () => {

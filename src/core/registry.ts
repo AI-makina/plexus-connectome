@@ -14,6 +14,8 @@ export interface ProjectEntry {
     created_at: string;
     kind: 'genesis' | 'connected';
     owner?: string; // customer this connectome belongs to (Plexus Manager / CRM)
+    preferred_editor?: string; // last editor chosen in "Open project" (one-click next time)
+    preferred_ai?: string;     // last AI chosen to auto-engage ('none' = plain editor open)
 }
 export interface Registry { projects: ProjectEntry[]; next_port: number }
 

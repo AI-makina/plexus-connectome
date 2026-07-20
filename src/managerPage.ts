@@ -8,17 +8,37 @@ export const MANAGER_HTML = `<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Plexus Manager</title>
 <style>
-  :root { --ink0:#08090B; --ink1:#0E0F11; --ink2:#141518; --line:rgba(255,255,255,0.08);
-    --hi:#E7E9EC; --mid:#9BA1A9; --lo:#6B7280; --ghost:#3A3F46; --azure:#5B8DEF;
-    --green:#3D9A67; --amber:#D9B13D; --red:#E5484D; --mono:ui-monospace,Menlo,monospace; }
+  :root { /* glass system shared with the launcher: translucent surfaces over a
+    violet-black field washed in the connectome-art hues */
+    --ink0:#07060E; --ink1:rgba(255,255,255,.045); --ink2:rgba(255,255,255,.085);
+    --line:rgba(255,255,255,.10);
+    --hi:#EDEBF6; --mid:#A8A3BD; --lo:#6B6683; --ghost:#4A4660; --azure:#6FA8FF;
+    --green:#5FE3A1; --amber:#F5C044; --red:#E5484D; --violet:#A78BFA;
+    --grad:linear-gradient(135deg,#8B5CF6 0%,#C452E8 55%,#EC4899 100%);
+    --mono:ui-monospace,Menlo,monospace; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--ink0); color:var(--hi);
+  body { margin:0; color:var(--hi);
+    background:
+      radial-gradient(900px 620px at 10% -6%, rgba(139,92,246,.17), transparent 62%),
+      radial-gradient(820px 600px at 96% 14%, rgba(236,72,153,.11), transparent 58%),
+      radial-gradient(1000px 720px at 6% 108%, rgba(96,165,250,.10), transparent 62%),
+      var(--ink0);
+    background-attachment:fixed;
     font:14px/1.5 -apple-system,system-ui,sans-serif; min-height:100vh; }
-  header { padding:22px 28px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:12px; }
-  header h1 { font-size:17px; font-weight:600; margin:0; }
+  ::selection{background:rgba(139,92,246,.4)}
+  ::-webkit-scrollbar{width:10px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:6px;border:2px solid transparent;background-clip:content-box}::-webkit-scrollbar-track{background:transparent}
+  .deco{position:fixed;pointer-events:none;mix-blend-mode:screen;z-index:0;user-select:none}
+  .deco-a{top:-140px;right:-160px;width:480px;opacity:.42;transform:rotate(24deg);filter:saturate(1.15)}
+  header { padding:22px 28px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; position:relative; z-index:1;
+    background:rgba(255,255,255,.02); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); }
+  header .brand-icon{width:28px;height:28px;object-fit:contain;border-radius:7px;flex:none;
+    box-shadow:0 3px 12px rgba(0,0,0,.5), 0 0 18px rgba(139,92,246,.28)}
+  header h1 { font-size:17px; font-weight:600; margin:0;
+    background:linear-gradient(92deg,#E4DCFF 0%,#F3B8E4 55%,#BBD4FF 100%);
+    -webkit-background-clip:text;background-clip:text;color:transparent; }
   header .tag { font:500 10px var(--mono); color:var(--lo); text-transform:uppercase; letter-spacing:.14em; }
   header .right { margin-left:auto; font-size:11px; color:var(--lo); }
-  .wrap { padding:20px 28px 60px; max-width:960px; margin:0 auto; }
+  .wrap { padding:20px 28px 60px; max-width:960px; margin:0 auto; position:relative; z-index:1; }
   .cust { margin-bottom:26px; }
   .cust-head { display:flex; align-items:baseline; gap:8px; margin-bottom:10px; }
   .cust-head .name { font-size:15px; font-weight:600; }
@@ -26,12 +46,18 @@ export const MANAGER_HTML = `<!doctype html>
     border-radius:5px; color:var(--hi); padding:2px 7px; outline:none; font-family:inherit; min-width:120px; }
   .cust-name-edit:hover { border-color:var(--line); }
   .cust-name-edit:focus { border-color:var(--azure); background:var(--ink2); }
-  .bulk { padding:10px 28px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px; font-size:12px; color:var(--mid); }
-  .bulk input { background:var(--ink2); border:1px solid var(--line); border-radius:6px; color:var(--hi); font-size:12px; padding:5px 10px; width:180px; outline:none; }
-  .bulk button { background:var(--azure); border:none; border-radius:6px; color:#08090B; font-size:11px; font-weight:600; padding:6px 12px; cursor:pointer; }
+  .bulk { padding:10px 28px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px; font-size:12px; color:var(--mid); position:relative; z-index:1; }
+  .bulk input { background:rgba(0,0,0,.28); border:1px solid var(--line); border-radius:8px; color:var(--hi); font-size:12px; padding:5px 10px; width:180px; outline:none; }
+  .bulk button { background:var(--grad); border:none; border-radius:8px; color:#fff; font-size:11px; font-weight:600; padding:6px 13px; cursor:pointer;
+    box-shadow:0 3px 14px rgba(139,92,246,.35), inset 0 1px 0 rgba(255,255,255,.25); }
+  .bulk button:hover { filter:brightness(1.12); }
   .cust-head .count { font:500 10px var(--mono); color:var(--lo); text-transform:uppercase; letter-spacing:.1em; }
   .cust.unassigned .cust-head .name { color:var(--lo); }
-  .card { background:var(--ink1); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:8px; }
+  .card { background:var(--ink1); border:1px solid var(--line); border-radius:14px; padding:14px 16px; margin-bottom:10px;
+    backdrop-filter:blur(16px) saturate(1.25); -webkit-backdrop-filter:blur(16px) saturate(1.25);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.06), 0 6px 22px rgba(0,0,0,.28);
+    transition:border-color .16s, box-shadow .16s; }
+  .card:hover { border-color:rgba(167,139,250,.30); }
   .row1 { display:flex; align-items:center; gap:10px; }
   .dot { width:7px; height:7px; border-radius:50%; flex:none; }
   .cname { font-weight:600; font-size:14px; }
@@ -59,7 +85,9 @@ export const MANAGER_HTML = `<!doctype html>
   .muted { color:var(--lo); font-size:12px; }
   a.back { color:var(--azure); text-decoration:none; font-size:12px; }
   /* ── Fleet aggregate panel (vendor rollup across all connectomes) ── */
-  .fleet { background:var(--ink1); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-bottom:22px; }
+  .fleet { background:var(--ink1); border:1px solid var(--line); border-radius:16px; padding:16px 18px; margin-bottom:22px;
+    backdrop-filter:blur(18px) saturate(1.3); -webkit-backdrop-filter:blur(18px) saturate(1.3);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.07), 0 10px 30px rgba(0,0,0,.32); }
   .fleet h2 { font-size:12px; font-weight:600; margin:0 0 12px; color:var(--mid); text-transform:uppercase; letter-spacing:.12em; display:flex; align-items:baseline; gap:8px; }
   .fleet h2 .sub { font:400 10px var(--mono); color:var(--lo); letter-spacing:0; text-transform:none; }
   .tiles { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:14px; }
@@ -80,7 +108,7 @@ export const MANAGER_HTML = `<!doctype html>
   /* ── Per-card drill-down ── */
   .expand { cursor:pointer; user-select:none; color:var(--lo); font:11px var(--mono); margin-left:8px; }
   .expand:hover { color:var(--hi); }
-  .card.open { border-color:rgba(91,141,239,.35); }
+  .card.open { border-color:rgba(167,139,250,.45); box-shadow:inset 0 1px 0 rgba(255,255,255,.08), 0 10px 28px rgba(0,0,0,.36), 0 0 26px rgba(139,92,246,.10); }
   .detail { margin-top:13px; padding-top:13px; border-top:1px solid var(--line); display:grid; grid-template-columns:1fr 1fr; gap:16px; }
   .detail .col .h { font:600 10px var(--mono); color:var(--lo); text-transform:uppercase; letter-spacing:.1em; margin-bottom:6px; }
   .ded { display:flex; justify-content:space-between; font-size:11px; padding:2px 0; color:var(--mid); } .ded b{color:var(--red);font-weight:600;font-family:var(--mono);}
@@ -90,7 +118,9 @@ export const MANAGER_HTML = `<!doctype html>
   @media(max-width:640px){ .detail{grid-template-columns:1fr;} }
 </style></head>
 <body>
+<img class="deco deco-a" src="/assets/launcher/neon_plexus.png" alt="">
 <header>
+  <img class="brand-icon" src="/assets/launcher/plexus_icon_1.png" alt="">
   <h1>Plexus Manager</h1>
   <span class="tag">vendor control-plane · local</span>
   <span class="right"><a class="back" href="/">← launcher</a> &nbsp; auto-refresh 12s</span>

@@ -10,45 +10,94 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
 <title>Plexus — Launcher</title>
 <style>
   :root {
-    --ink0:#08090B; --ink1:#0D0E10; --ink2:#131417;
-    --line1:#1E2026; --line2:#2A2D35; --hi:#E7E9EC; --mid:#9BA3AF; --lo:#5C6470;
-    --azure:#7AA2F7; --jade:#73C991; --gold:#E3B341; --coral:#E8795B; --rose:#E573B7;
-    --violet:#9D7CD8; --slate:#8B98A9; --ice:#C8CFDA; --crimson:#E5484D;
+    /* Integration of the connectome-art palette: violet is the identity hue,
+       rose/azure/jade/gold are the region accents. Surfaces are TRANSLUCENT
+       (glassmorphism): every component that reads ink1/ink2 + line1/line2
+       becomes glass automatically. */
+    --ink0:#07060E; --ink1:rgba(255,255,255,.045); --ink2:rgba(255,255,255,.085);
+    --line1:rgba(255,255,255,.09); --line2:rgba(255,255,255,.17);
+    --hi:#EDEBF6; --mid:#A8A3BD; --lo:#6B6683; --ghost:#4A4660;
+    --azure:#6FA8FF; --jade:#5FE3A1; --gold:#F5C044; --coral:#FF7E6B; --rose:#F26DC0;
+    --violet:#A78BFA; --slate:#8B98A9; --ice:#D6D2E8; --crimson:#E5484D;
+    --grad:linear-gradient(135deg,#8B5CF6 0%,#C452E8 55%,#EC4899 100%);
     --mono:'SF Mono',ui-monospace,Menlo,monospace; --sans:-apple-system,'Inter',sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:var(--ink0);color:var(--hi);font:15px/1.5 var(--sans);min-height:100vh}
-  .wrap{max-width:980px;margin:0 auto;padding:48px 24px 96px}
-  header{display:flex;align-items:baseline;gap:14px;margin-bottom:40px}
-  header h1{font:600 20px var(--sans);letter-spacing:.02em}
-  header .glyph{color:var(--azure);font-size:22px}
+  body{
+    background:
+      radial-gradient(900px 620px at 10% -6%, rgba(139,92,246,.17), transparent 62%),
+      radial-gradient(820px 600px at 96% 14%, rgba(236,72,153,.11), transparent 58%),
+      radial-gradient(1000px 720px at 6% 108%, rgba(96,165,250,.10), transparent 62%),
+      radial-gradient(700px 520px at 88% 96%, rgba(95,227,161,.05), transparent 60%),
+      var(--ink0);
+    background-attachment:fixed;
+    color:var(--hi);font:15px/1.5 var(--sans);min-height:100vh}
+  ::selection{background:rgba(139,92,246,.4)}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:6px;border:2px solid transparent;background-clip:content-box}
+  ::-webkit-scrollbar-track{background:transparent}
+  /* ambient neon-synapse decorations (pure-black PNG → screen blend = transparent) */
+  .deco{position:fixed;pointer-events:none;mix-blend-mode:screen;z-index:0;user-select:none}
+  .deco-a{top:-140px;right:-160px;width:520px;opacity:.5;transform:rotate(24deg);filter:saturate(1.15)}
+  .deco-b{bottom:-120px;left:-150px;width:380px;opacity:.32;transform:rotate(-142deg);filter:blur(1.5px) saturate(1.1)}
+  .wrap{max-width:980px;margin:0 auto;padding:48px 24px 96px;position:relative;z-index:1}
+  header{display:flex;align-items:center;gap:13px;margin-bottom:40px}
+  /* Brand wordmark — the SAME identity as the connectome viz: Inter Variable,
+     600, uppercase, .28em tracking (font-face declared below with the wizard). */
+  header h1{font:600 19px/1 'Inter Variable',Inter,-apple-system,system-ui,sans-serif;
+    text-transform:uppercase;letter-spacing:.28em;margin-right:-.28em;
+    background:linear-gradient(92deg,#E4DCFF 0%,#F3B8E4 55%,#BBD4FF 100%);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  header .glyph{color:var(--violet);font-size:22px;filter:drop-shadow(0 0 10px rgba(167,139,250,.75))}
+  /* The app icon as the logo mark — same asset the wizard brand row uses,
+     scaled for the dashboard header with a soft violet halo. */
+  .brand-icon{width:34px;height:34px;object-fit:contain;border-radius:8px;flex:none;
+    box-shadow:0 4px 14px rgba(0,0,0,.5), 0 0 22px rgba(139,92,246,.28);user-select:none}
   header .tag{font:500 10px var(--mono);color:var(--lo);text-transform:uppercase;letter-spacing:.14em}
   .mono{font-family:var(--mono)}
   .cards{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:44px}
-  .card{background:var(--ink1);border:1px solid var(--line1);border-radius:10px;padding:26px;cursor:pointer;transition:border-color .15s, transform .15s}
-  .card:hover{border-color:var(--line2);transform:translateY(-1px)}
+  .card{position:relative;background:var(--ink1);border:1px solid var(--line1);border-radius:16px;padding:26px;cursor:pointer;
+    backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.07), 0 10px 34px rgba(0,0,0,.35);
+    transition:border-color .18s, transform .18s, box-shadow .18s;overflow:hidden}
+  .card::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+    background:radial-gradient(420px 190px at 14% -18%, rgba(139,92,246,.14), transparent 62%)}
+  .card.connect::before{background:radial-gradient(420px 190px at 14% -18%, rgba(245,192,68,.11), transparent 62%)}
+  .card.new::before{background:radial-gradient(420px 190px at 14% -18%, rgba(95,227,161,.11), transparent 62%)}
+  .card:hover{border-color:rgba(167,139,250,.45);transform:translateY(-2px);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.09), 0 16px 44px rgba(0,0,0,.45), 0 0 34px rgba(139,92,246,.12)}
   .card h2{font:600 16px var(--sans);margin-bottom:6px}
   .card p{color:var(--mid);font-size:13px}
   .card .k{font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;margin-bottom:14px;display:block}
   .card.new .k{color:var(--jade)} .card.connect .k{color:var(--gold)}
   h3.sect{font:500 11px var(--mono);color:var(--lo);letter-spacing:.14em;text-transform:uppercase;margin:34px 0 12px}
-  .proj{background:var(--ink1);border:1px solid var(--line1);border-radius:8px;padding:14px 18px;display:flex;align-items:center;gap:14px;margin-bottom:8px}
+  .proj{background:var(--ink1);border:1px solid var(--line1);border-radius:14px;padding:14px 18px;display:flex;align-items:center;gap:14px;margin-bottom:10px;
+    backdrop-filter:blur(16px) saturate(1.25);-webkit-backdrop-filter:blur(16px) saturate(1.25);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.06), 0 6px 22px rgba(0,0,0,.28);
+    transition:border-color .16s, transform .16s, box-shadow .16s}
+  .proj:hover{border-color:rgba(167,139,250,.34);transform:translateY(-1px);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.08), 0 10px 28px rgba(0,0,0,.36), 0 0 26px rgba(139,92,246,.10)}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--lo);flex:none}
-  .dot.on{background:var(--jade);box-shadow:0 0 8px var(--jade)}
+  .dot.on{background:var(--jade);box-shadow:0 0 10px var(--jade), 0 0 22px rgba(95,227,161,.5)}
   .proj .info{flex:1;min-width:0}
   .proj .name{font-weight:600;font-size:14px}
   .proj .path{font:11px var(--mono);color:var(--lo);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .proj .ports{font:10px var(--mono);color:var(--mid)}
-  button{background:var(--ink2);color:var(--hi);border:1px solid var(--line2);border-radius:6px;padding:7px 14px;font:500 12px var(--sans);cursor:pointer}
-  button:hover{border-color:var(--slate)}
-  button.primary{background:var(--azure);border-color:var(--azure);color:#0A0F1E;font-weight:600}
-  button.ghost{background:transparent;border-color:transparent;color:var(--lo)}
-  button:disabled{opacity:.45;cursor:default}
+  button{background:var(--ink2);color:var(--hi);border:1px solid var(--line2);border-radius:9px;padding:7px 14px;font:500 12px var(--sans);cursor:pointer;
+    transition:border-color .15s, box-shadow .15s, transform .12s}
+  button:hover{border-color:rgba(167,139,250,.5);box-shadow:0 0 16px rgba(139,92,246,.16)}
+  button:active{transform:scale(.97)}
+  button.primary{background:var(--grad);border:none;color:#fff;font-weight:600;
+    box-shadow:0 4px 18px rgba(139,92,246,.35), inset 0 1px 0 rgba(255,255,255,.25)}
+  button.primary:hover{filter:brightness(1.12);box-shadow:0 6px 24px rgba(196,82,232,.45), inset 0 1px 0 rgba(255,255,255,.25)}
+  button.ghost{background:transparent;border-color:transparent;color:var(--lo);box-shadow:none}
+  button.ghost:hover{color:var(--ice);border-color:var(--line1);box-shadow:none}
+  button:disabled{opacity:.45;cursor:default;box-shadow:none}
   .view{display:none}.view.active{display:block}
   label{display:block;font:500 10px var(--mono);color:var(--mid);letter-spacing:.12em;text-transform:uppercase;margin:18px 0 6px}
-  input[type=text],textarea{width:100%;background:var(--ink1);border:1px solid var(--line1);border-radius:6px;color:var(--hi);padding:10px 12px;font:13px var(--sans)}
+  input[type=text],textarea{width:100%;background:rgba(0,0,0,.28);border:1px solid var(--line1);border-radius:9px;color:var(--hi);padding:10px 12px;font:13px var(--sans);transition:border-color .15s, box-shadow .15s}
   textarea{font-family:var(--mono);font-size:12px;resize:vertical;min-height:56px}
-  input:focus,textarea:focus{outline:none;border-color:var(--azure)}
+  input:focus,textarea:focus{outline:none;border-color:rgba(167,139,250,.65);box-shadow:0 0 0 3px rgba(139,92,246,.14)}
   .q{border-left:2px solid var(--line2);padding-left:14px;margin-bottom:4px}
   .q .region{font:500 10px var(--mono);letter-spacing:.1em;text-transform:uppercase}
   .hint{font-size:12px;color:var(--lo);margin-top:4px}
@@ -56,16 +105,20 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .grow{flex:1}
   .back{color:var(--lo);font:12px var(--mono);cursor:pointer;margin-bottom:22px;display:inline-block}
   .back:hover{color:var(--mid)}
-  .result{background:var(--ink1);border:1px solid var(--line1);border-radius:10px;padding:22px;margin-top:20px}
+  .result{background:var(--ink1);border:1px solid var(--line1);border-radius:16px;padding:22px;margin-top:20px;
+    backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.06), 0 10px 30px rgba(0,0,0,.32)}
   .result h4{font-size:14px;margin-bottom:10px}
-  .cmd{background:var(--ink0);border:1px solid var(--line1);border-radius:6px;padding:10px 12px;font:11px var(--mono);color:var(--ice);word-break:break-all;cursor:pointer;margin:8px 0}
-  .cmd:hover{border-color:var(--slate)}
+  .cmd{background:rgba(0,0,0,.42);border:1px solid var(--line1);border-radius:9px;padding:10px 12px;font:11px var(--mono);color:var(--ice);word-break:break-all;cursor:pointer;margin:8px 0;transition:border-color .15s, box-shadow .15s}
+  .cmd:hover{border-color:rgba(167,139,250,.5);box-shadow:0 0 14px rgba(139,92,246,.14)}
   .qa{font-size:12px;color:var(--mid);padding:6px 0;border-bottom:1px solid var(--line1)}
   .bar{display:flex;gap:2px;height:10px;border-radius:3px;overflow:hidden;margin:10px 0}
   .bar div{min-width:2px}
   .status{font:12px var(--mono);color:var(--gold);margin:14px 0;min-height:18px}
   /* ── Folder picker (fallback modal — macOS gets the native dialog) ── */
-  .picker{width:100%;max-width:560px;background:var(--ink1);border:1px solid var(--line2);border-radius:12px;display:flex;flex-direction:column;max-height:72vh;box-shadow:0 24px 70px rgba(0,0,0,.55)}
+  .picker{width:100%;max-width:560px;background:rgba(16,13,28,.72);border:1px solid var(--line2);border-radius:18px;display:flex;flex-direction:column;max-height:72vh;
+    backdrop-filter:blur(26px) saturate(1.35);-webkit-backdrop-filter:blur(26px) saturate(1.35);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.08), 0 24px 70px rgba(0,0,0,.6), 0 0 60px rgba(139,92,246,.10)}
   .pk-head{padding:14px 16px 10px;border-bottom:1px solid var(--line1)}
   .pk-title{font:600 13px var(--sans);margin-bottom:8px}
   .crumbs{display:flex;flex-wrap:wrap;gap:2px;align-items:center;font:11px var(--mono)}
@@ -75,8 +128,8 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .crumb.cur:hover{background:transparent}
   .crumb-sep{color:var(--ghost);padding:0 1px}
   .places{display:flex;gap:6px;padding:9px 16px;border-bottom:1px solid var(--line1);flex-wrap:wrap}
-  .place{font:11px var(--sans);color:var(--mid);background:var(--ink2);border:1px solid var(--line1);border-radius:14px;padding:3px 11px;cursor:pointer}
-  .place:hover{color:var(--hi);border-color:var(--slate)}
+  .place{font:11px var(--sans);color:var(--mid);background:var(--ink2);border:1px solid var(--line1);border-radius:14px;padding:3px 11px;cursor:pointer;transition:border-color .15s,color .15s}
+  .place:hover{color:var(--hi);border-color:rgba(167,139,250,.5)}
   .pk-filter{margin:10px 16px 4px}
   .pk-filter input{width:100%;background:var(--ink0);border:1px solid var(--line1);border-radius:6px;color:var(--hi);padding:6px 10px;font:12px var(--sans)}
   .pk-filter input:focus{outline:none;border-color:var(--azure)}
@@ -97,7 +150,11 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .wiz-brand img{width:30px;height:30px;border-radius:7px;box-shadow:0 4px 14px rgba(0,0,0,.45)}
   /* mirror of the viz .wordmark (600 / uppercase / .28em tracking), scaled for a window header */
   .wiz-wordmark{font:600 15px/1 'Inter Variable',Inter,-apple-system,system-ui,sans-serif;text-transform:uppercase;letter-spacing:.28em;color:var(--hi);margin-right:-.28em}
-  .wiz{position:fixed;inset:0;background:radial-gradient(120% 90% at 50% 0%, #14161c 0%, #08090B 62%);display:none;align-items:center;justify-content:center;z-index:100;padding:24px;overflow:hidden}
+  .wiz{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:100;padding:24px;overflow:hidden;
+    background:
+      radial-gradient(120% 90% at 50% 0%, rgba(139,92,246,.14) 0%, transparent 55%),
+      radial-gradient(90% 70% at 85% 90%, rgba(236,72,153,.08) 0%, transparent 55%),
+      radial-gradient(120% 90% at 50% 0%, #120F1E 0%, #07060E 62%)}
   .wiz.show{display:flex}
   /* connectome-art backdrop — fades in once the presentation ends (info windows) */
   .wiz .artbg{position:absolute;inset:0;background:url('/assets/launcher/Connectome_art.png') center/cover no-repeat;opacity:0;transition:opacity .8s ease;pointer-events:none}
@@ -125,7 +182,8 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .wiz-actions{display:flex;gap:14px;justify-content:center;align-items:center;margin-top:8px}
   .wiz-skip{color:var(--lo);font:12px var(--mono);cursor:pointer}
   .wiz-skip:hover{color:var(--mid)}
-  .clientrow{display:flex;align-items:center;gap:12px;background:var(--ink1);border:1px solid var(--line1);border-radius:9px;padding:12px 15px;margin:8px 0;text-align:left}
+  .clientrow{display:flex;align-items:center;gap:12px;background:var(--ink1);border:1px solid var(--line1);border-radius:12px;padding:12px 15px;margin:8px 0;text-align:left;
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
   .clientrow .ci{flex:1;min-width:0}.clientrow .ci b{font-size:14px}
   .clientrow .c-state{font:10px var(--mono);color:var(--lo);margin-left:8px;text-transform:uppercase;letter-spacing:.06em}
   .clientrow .c-hint{font-size:10.5px;color:var(--lo);margin-top:2px;line-height:1.4}
@@ -135,24 +193,57 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .wiz-ok{color:var(--jade);font-size:13px;margin:10px 0;background:rgba(115,201,145,.1);border:1px solid rgba(115,201,145,.3);border-radius:8px;padding:9px 12px}
   .wiz-manual{font-size:12px;color:var(--mid);text-align:left;margin:10px 0}
   .wiz-choices{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:20px 0}
-  .wiz-choice{background:var(--ink1);border:1px solid var(--line1);border-radius:10px;padding:20px 18px;cursor:pointer;text-align:left;transition:border-color .15s,transform .15s}
-  .wiz-choice:hover{border-color:var(--azure);transform:translateY(-1px)}
+  .wiz-choice{background:var(--ink1);border:1px solid var(--line1);border-radius:14px;padding:20px 18px;cursor:pointer;text-align:left;
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    transition:border-color .15s,transform .15s,box-shadow .15s}
+  .wiz-choice:hover{border-color:rgba(167,139,250,.55);transform:translateY(-1px);box-shadow:0 0 26px rgba(139,92,246,.14)}
   .wiz-choice b{display:block;font-size:15px;margin-bottom:5px}
   .wiz-choice span{color:var(--mid);font-size:12px;line-height:1.5}
   .powered{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:26px;color:var(--lo);font:11px var(--mono);letter-spacing:.04em}
   .powered img{height:16px;width:auto;opacity:.85}
-  .modal{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;align-items:center;justify-content:center;z-index:90;padding:24px}
+  .modal{position:fixed;inset:0;background:rgba(5,4,12,.55);display:none;align-items:center;justify-content:center;z-index:90;padding:24px;
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
   .modal.show{display:flex}
-  .modal-card{width:100%;max-width:420px;background:var(--ink1);border:1px solid var(--line2);border-radius:12px;padding:22px}
+  .modal-card{width:100%;max-width:420px;background:rgba(16,13,28,.74);border:1px solid var(--line2);border-radius:18px;padding:22px;
+    backdrop-filter:blur(26px) saturate(1.35);-webkit-backdrop-filter:blur(26px) saturate(1.35);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.08), 0 24px 70px rgba(0,0,0,.6)}
   .modal-card h3{font-size:16px;margin-bottom:4px}
   .rm-path{font:11px var(--mono);color:var(--lo);word-break:break-all;margin-bottom:14px}
   .rm-clients{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
   .rm-clients button{width:100%;text-align:left}
   .powered-foot{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:56px;padding-top:22px;border-top:1px solid var(--line1);color:var(--lo);font:11px var(--mono);letter-spacing:.04em}
   .powered-foot img{height:18px;opacity:.8}
+  /* Skyfynd.io is a live link in both branding spots (the video overlay is
+     pointer-events:none, so the anchor re-enables its own clicks). */
+  .powered-foot a,.vid-powered a{color:inherit;text-decoration:none;border-bottom:1px solid rgba(207,211,218,.35);transition:color .15s,border-color .15s}
+  .powered-foot a:hover,.vid-powered a:hover{color:var(--violet);border-color:var(--violet)}
+  .vid-powered a{pointer-events:auto}
+  /* ── Top-right burger menu + Launch Guide ── */
+  .burger-wrap{position:relative}
+  .burger{cursor:pointer;color:var(--lo);font-size:17px;line-height:1;padding:2px 7px;border-radius:7px;transition:color .15s,background .15s}
+  .burger:hover{color:var(--ice);background:var(--ink2)}
+  .menu{display:none;position:absolute;right:0;top:27px;min-width:172px;background:rgba(16,13,28,.85);border:1px solid var(--line2);border-radius:12px;padding:6px;z-index:60;
+    backdrop-filter:blur(22px) saturate(1.35);-webkit-backdrop-filter:blur(22px) saturate(1.35);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.08), 0 16px 44px rgba(0,0,0,.55)}
+  .menu.show{display:block}
+  .menu-item{padding:9px 12px;border-radius:8px;font:500 12.5px var(--sans);color:var(--hi);cursor:pointer;white-space:nowrap}
+  .menu-item:hover{background:rgba(139,92,246,.16)}
+  .guide{max-width:640px;max-height:82vh;overflow:auto}
+  .guide h3{font:600 17px var(--sans);margin-bottom:2px}
+  .guide .g-sub{color:var(--mid);font-size:12.5px;margin-bottom:14px}
+  .g-rule{background:rgba(139,92,246,.12);border:1px solid rgba(167,139,250,.35);border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.55;margin-bottom:14px;color:var(--mid)}
+  .g-rule b{color:var(--ice)}
+  .g-item{display:flex;gap:12px;padding:11px 2px;border-bottom:1px solid var(--line1);font-size:12.5px;line-height:1.55;color:var(--mid)}
+  .g-item:last-of-type{border-bottom:none}
+  .g-item .n{flex:none;width:22px;height:22px;border-radius:7px;background:var(--grad);color:#fff;font:600 11px var(--mono);display:flex;align-items:center;justify-content:center;margin-top:1px}
+  .g-item b{color:var(--hi)}
 </style>
 </head>
 <body>
+
+<!-- ambient decoration: the neon synapse (pure-black PNG → screen blend melts it into the page) -->
+<img class="deco deco-a" src="/assets/launcher/neon_plexus.png" alt="">
+<img class="deco deco-b" src="/assets/launcher/neon_plexus.png" alt="">
 
 <!-- ── ONBOARDING WIZARD (first run) ── -->
 <div class="wiz" id="wizard">
@@ -171,7 +262,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <div class="wstep" data-step="1">
       <div class="wiz-vidwrap">
         <video id="wiz-vid" src="/assets/launcher/plexus_launch_presentation.mp4" muted playsinline preload="auto" onended="vidEnded()"></video>
-        <div class="vid-powered"><img src="/assets/launcher/skyfynd_logo.png" alt="SkyFynd"> Powered by SkyFynd</div>
+        <div class="vid-powered"><img src="/assets/launcher/skyfynd_logo.png" alt="SkyFynd"> Powered by&nbsp;<a href="https://skyfynd.io" target="_blank" rel="noopener">Skyfynd.io</a></div>
       </div>
     </div>
     <!-- step 2 · connect your AI (one time) -->
@@ -238,12 +329,36 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   </div>
 </div>
 
+<!-- ── LAUNCH GUIDE (burger menu) ── -->
+<div class="modal" id="guide-modal" onclick="if(event.target===this)closeGuide()">
+  <div class="modal-card guide">
+    <h3>Launch Guide</h3>
+    <div class="g-sub">How projects, windows, and terminals connect.</div>
+    <div class="g-rule"><b>The golden rule:</b> the folder a terminal is in when you <b>start</b> the AI decides everything — which Plexus project (if any) the session belongs to and which brain it loads. Move first, then start the AI. A running AI can never be re-pointed to another folder or project.</div>
+    <div class="g-item"><span class="n">1</span><span><b>Opening a Plexus project — "Resume with AI".</b> Always opens the Plexus project in its own space, never inside an existing window. Pick an editor (VS&nbsp;Code, Cursor…) and you get a new editor window anchored to that Plexus project — every terminal you open inside that window starts linked to it automatically. Or pick your AI for the project and you get a Terminal window with that AI already running inside it.</span></div>
+    <div class="g-item"><span class="n">2</span><span><b>One window per Plexus project.</b> A window is not the same as a terminal: the window is the whole editor frame, and terminals are the command panels that run <b>inside</b> a window. Every Plexus project you open gets its <b>own</b> window — opening a second Plexus project never touches the first. Two projects side by side means two windows, each with its own brain, engine, and terminals, fully independent.</span></div>
+    <div class="g-item"><span class="n">3</span><span><b>Working on Plexus project B from inside project A's window.</b> Open a new terminal there (it starts linked to A). Copy B's <b>connect code</b> from its card, paste it in the terminal <b>before engaging the AI</b> — the terminal moves to B and the AI starts already linked to B. Never paste a connect code into an AI chat: it only works in the terminal. When that AI exits, the terminal falls back to A — to return to B, paste the code again, always before engaging the AI.</span></div>
+    <div class="g-item"><span class="n">4</span><span><b>Non-Plexus work from inside a Plexus project's window.</b> Open a new terminal (it starts linked to the Plexus project). <b>Before engaging the AI</b>, move the terminal out: type <span class="mono">cd&nbsp;</span>, paste your non-Plexus folder's path, press enter — then engage the AI. That folder must live <b>outside</b> the Plexus project's folder, because anything inside a Plexus project's folder is treated as part of that Plexus project. The window's sidebar will still show the Plexus project — only that terminal points elsewhere.</span></div>
+    <div class="g-item"><span class="n">5</span><span><b>The one-time permission question.</b> The very first time you engage an AI inside a Plexus project, it asks a single yes/no question: whether to use the Plexus connection it found in that project's folder. Approve it. It is asked once per project, never again — the only setup question you'll ever see.</span></div>
+    <div class="g-item"><span class="n">6</span><span><b>Know which project a session belongs to.</b> Every AI session connected to a Plexus project begins its replies with the badge <span class="mono">⬡ plexus active — name</span>. One glance at any terminal tells you exactly which Plexus project it is working on. No badge means that session is not connected to any Plexus project.</span></div>
+    <div class="g-item"><span class="n">7</span><span><b>If you ask for the wrong project.</b> If you start describing work that belongs to a different project while inside the wrong session, Plexus stops before anything is written and shows you how to open the right project instead. Nothing mixes silently.</span></div>
+    <div class="g-item"><span class="n">8</span><span><b>Coming back later.</b> To continue a Plexus project tomorrow — or after closing everything — open it the same way as the first time: click <b>Resume with AI</b> on its card, or paste its connect code in a fresh terminal before engaging the AI (codes never expire). The new session automatically finds the project's brain and memory, which live inside the project's folder, and picks up where the last session left off. You never re-explain anything.</span></div>
+    <div style="margin-top:14px;text-align:right"><button class="ghost" onclick="closeGuide()">close</button></div>
+  </div>
+</div>
+
 <div class="wrap">
   <header>
-    <span class="glyph">⬡</span><h1>PLEXUS</h1><span class="tag">launcher · evidence protocol</span>
+    <img class="brand-icon" src="/assets/launcher/plexus_icon_1.png" alt=""><h1>PLEXUS</h1><span class="tag">launcher · evidence protocol</span>
     <span style="margin-left:auto;display:flex;gap:16px;align-items:baseline">
       <span onclick="replayIntro()" style="cursor:pointer;color:var(--lo);font:500 11px var(--mono)" title="watch the Plexus intro again">intro ⟲</span>
       <a href="/manager" style="color:var(--azure);text-decoration:none;font:500 12px var(--sans)">Manager →</a>
+      <span class="burger-wrap">
+        <span class="burger" onclick="toggleMenu(event)" title="menu">☰</span>
+        <div class="menu" id="topmenu">
+          <div class="menu-item" onclick="openGuide()">Launch Guide</div>
+        </div>
+      </span>
     </span>
   </header>
 
@@ -302,7 +417,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <div id="cx-result"></div>
   </div>
 
-  <footer class="powered-foot"><img src="/assets/launcher/skyfynd_logo.png" alt="SkyFynd"> Powered by SkyFynd</footer>
+  <footer class="powered-foot"><img src="/assets/launcher/skyfynd_logo.png" alt="SkyFynd"> Powered by&nbsp;<a href="https://skyfynd.io" target="_blank" rel="noopener">Skyfynd.io</a></footer>
 </div>
 
 <script>
@@ -391,6 +506,15 @@ async function undoForget(){
   LAST_FORGOTTEN=null; dismissToast(); loadProjects();
 }
 function copyText(t, btn){navigator.clipboard.writeText(t);if(btn){const o=btn.textContent;btn.textContent='copied ✓';setTimeout(()=>btn.textContent=o,1500);}}
+
+// burger menu + launch guide
+function toggleMenu(e){ e.stopPropagation(); document.getElementById('topmenu').classList.toggle('show'); }
+document.addEventListener('click', function(e){
+  var m=document.getElementById('topmenu');
+  if(m && m.classList.contains('show') && !e.target.closest('.burger-wrap')) m.classList.remove('show');
+});
+function openGuide(){ document.getElementById('topmenu').classList.remove('show'); document.getElementById('guide-modal').classList.add('show'); }
+function closeGuide(){ document.getElementById('guide-modal').classList.remove('show'); }
 
 // new project
 async function createProject(){

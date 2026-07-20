@@ -63,6 +63,11 @@ export const MANAGER_HTML = `<!doctype html>
   .cname { font-weight:600; font-size:14px; }
   .fname { font:11px var(--mono); color:var(--ghost); }
   .ver { margin-left:auto; font:11px var(--mono); color:var(--mid); display:flex; align-items:center; gap:8px; }
+  /* fixed slots so version / action / details align across every card */
+  .ver .vnum { font-style:normal; min-width:58px; text-align:right; display:inline-block; }
+  .upd-btn, .start-btn { min-width:100px; text-align:center; }
+  .uptodate, .st-sent, .st-pushed, .st-updated { min-width:100px; text-align:center; display:inline-block; }
+  .expand { min-width:62px; text-align:right; display:inline-block; }
   .upd { color:var(--green); font-size:10px; border:1px solid rgba(61,154,103,.4); border-radius:4px; padding:1px 5px; }
   .upd-btn { color:#08090B; background:var(--green); border:none; font:600 10px var(--mono); border-radius:4px; padding:3px 9px; cursor:pointer; margin-left:2px; }
   .upd-btn:disabled { opacity:.55; cursor:default; }
@@ -240,8 +245,8 @@ function renderConnectome(c){
     ? '<span class="expand" data-path="'+esc(c.path)+'" onclick="toggleCard(this)">'+(isOpen?'hide ▴':'details ▾')+'</span>'
     : '';
   var ver = c.running
-    ? '<span class="ver">v'+esc(live.version||'?')+' '+action+exp+'</span>'
-    : '<span class="ver muted">stopped</span> '+action;
+    ? '<span class="ver"><i class="vnum">v'+esc(live.version||'?')+'</i>'+action+exp+'</span>'
+    : '<span class="ver"><i class="vnum muted">stopped</i>'+action+'</span>';
   return '<div class="card'+(isOpen?' open':'')+'">'
     + '<div class="row1"><span class="dot" style="background:'+dotCol+'"></span>'
     + '<span class="cname">'+esc(c.display_name)+'</span> <span class="fname">'+esc(c.name)+'</span>'

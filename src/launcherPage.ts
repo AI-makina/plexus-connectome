@@ -80,7 +80,13 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .dot{width:8px;height:8px;border-radius:50%;background:var(--lo);flex:none}
   .dot.on{background:var(--jade);box-shadow:0 0 10px var(--jade), 0 0 22px rgba(95,227,161,.5)}
   .proj .info{flex:1;min-width:0}
-  .proj .name{font-weight:600;font-size:14px}
+  .proj .name{font-weight:600;font-size:14px;display:flex;align-items:center;gap:9px}
+  /* Fixed action grid: every button type in its own column, identical across
+     cards — labels may change ("Open brain"/"Start + open") but widths never do. */
+  .proj .pacts{display:grid;grid-template-columns:116px 116px 122px minmax(30px,auto);gap:8px;align-items:center;flex:none}
+  .proj .pacts button{width:100%;text-align:center;white-space:nowrap;padding:7px 4px}
+  .proj .pacts .xwrap{display:flex;gap:6px;justify-content:center;align-items:center}
+  .proj .pacts .xwrap button{width:auto;padding:7px 9px}
   .proj .path{font:11px var(--mono);color:var(--lo);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .proj .ports{font:10px var(--mono);color:var(--mid)}
   button{background:var(--ink2);color:var(--hi);border:1px solid var(--line2);border-radius:9px;padding:7px 14px;font:500 12px var(--sans);cursor:pointer;
@@ -489,10 +495,12 @@ async function loadProjects(){
         <div class="ports" id="pulse-\${p.api_port}"></div>
         <div class="mcpstat">\${mcpStatusHtml(p)}</div>
       </div>
-      <button onclick="resumeWith('\${esc(p.path)}')" title="open this Plexus project in a code editor with your chosen AI already engaged">Open project</button>
-      <button onclick="serveProject('\${esc(p.path)}', \${p.ws_port})">\${p.running?'Open brain':'Start + open'}</button>
-      <button class="ghost" title="Copy this project's connect code — paste it in a TERMINAL (not into an AI chat) and that terminal becomes this project's AI session, wherever it started." onclick="copyText(\\\`\${esc(p.connect_code||'')}\\\`, this)">connect code ⧉</button>
-      <button class="ghost" title="Remove from the launcher list (nothing on disk is touched) — asks to confirm, then offers Undo." onclick="askForget(this,'\${esc(p.path)}')">✕</button>
+      <div class="pacts">
+        <button onclick="resumeWith('\${esc(p.path)}')" title="open this Plexus project in a code editor with your chosen AI already engaged">Open project</button>
+        <button onclick="serveProject('\${esc(p.path)}', \${p.ws_port})">\${p.running?'Open brain':'Start + open'}</button>
+        <button class="ghost" title="Copy this project's connect code — paste it in a TERMINAL (not into an AI chat) and that terminal becomes this project's AI session, wherever it started." onclick="copyText(\\\`\${esc(p.connect_code||'')}\\\`, this)">connect code ⧉</button>
+        <span class="xwrap"><button class="ghost" title="Remove from the launcher list (nothing on disk is touched) — asks to confirm, then offers Undo." onclick="askForget(this,'\${esc(p.path)}')">✕</button></span>
+      </div>
     </div>\`).join('');
   // Reassurance pulse: proof the AI is actually leaning on each brain
   for(const p of r.projects){

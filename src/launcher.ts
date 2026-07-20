@@ -281,6 +281,11 @@ export function startLauncher(open = true) {
             if ((rec.disabledMcpjsonServers || []).includes('plexus')) return 'declined';
             if (rec.enableAllProjectMcpServers === true) return 'approved_all';
             if ((rec.enabledMcpjsonServers || []).includes('plexus')) return 'approved';
+            // Empirical (Claude Code 2.1.215, verified live on Tetris): accepting the
+            // folder-TRUST dialog authorizes the project's .mcp.json servers — the
+            // enabled/disabled arrays stay empty unless the per-server flow is used.
+            // Trust accepted + not explicitly disabled ⇒ plexus runs ⇒ approved.
+            if (rec.hasTrustDialogAccepted === true) return 'approved';
             return 'unasked';
         } catch { return 'unknown'; }
     }

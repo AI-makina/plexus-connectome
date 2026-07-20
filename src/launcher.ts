@@ -270,6 +270,21 @@ export function startLauncher(open = true) {
         res.set('Content-Type', 'text/html').send(LAUNCHER_HTML);
     });
 
+    // What did Claude Code record about this project's .mcp.json question?
+    // Read-only mirror of ~/.claude.json (Claude's own bookkeeping, never edited
+    // by us): approved | approved_all (option 2 — blanket) | declined | unasked.
+    function readMcpStatus(projectPath: string): string {
+        try {
+            const cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
+            const rec = cfg?.projects?.[path.resolve(projectPath)];
+            if (!rec) return 'unasked';
+            if ((rec.disabledMcpjsonServers || []).includes('plexus')) return 'declined';
+            if (rec.enableAllProjectMcpServers === true) return 'approved_all';
+            if ((rec.enabledMcpjsonServers || []).includes('plexus')) return 'approved';
+            return 'unasked';
+        } catch { return 'unknown'; }
+    }
+
     // Projects + live status
     app.get('/api/launcher/projects', async (_req, res) => {
         const reg = loadRegistry();
@@ -285,6 +300,7 @@ export function startLauncher(open = true) {
                 // they re-point Plexus without moving the session's anchor = split-brain.
                 // The -p flag itself remains a CLI/dev capability.)
                 connect_code: workCommand(p.name),
+                mcp_status: readMcpStatus(p.path),
             });
         }
         res.json({
@@ -749,6 +765,24 @@ export function startLauncher(open = true) {
         clientsCache = null;
         res.json({ ok: true, bin, mcp });
     });
+    // Re-arm the first-open permission question for a project — from ANY state
+    // (approved / approved_all / declined). Runs Claude Code's own documented
+    // command; approves NOTHING by itself. Running sessions are unaffected; the
+    // NEXT session in the project shows the three-option question again.
+    app.post('/api/launcher/rearm-mcp', (req, res) => {
+        const projectPath = path.resolve(String(req.body?.path || ''));
+        const reg = loadRegistry();
+        const proj = reg.projects.find(p => path.resolve(p.path) === projectPath);
+        if (!proj) return res.status(404).json({ error: 'project not in registry' });
+        if (!fs.existsSync(projectPath)) return res.status(400).json({ error: 'project folder missing' });
+        try {
+            execFileSync('claude', ['mcp', 'reset-project-choices'], { cwd: projectPath, encoding: 'utf8', timeout: 15000 });
+            res.json({ ok: true, note: 'Re-armed — the permission question will appear on the next AI session in this project.' });
+        } catch (err: any) {
+            res.status(500).json({ error: String(err?.stderr || err?.message || err).slice(0, 200) });
+        }
+    });
+
     app.post('/api/launcher/custom-ai/remove', (req, res) => {
         const bin = String(req.body?.bin || '').trim();
         const p = loadPrefs();

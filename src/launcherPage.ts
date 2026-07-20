@@ -244,6 +244,13 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .rm-clients button.dis{opacity:.45;cursor:default}
   .rm-clients button.dis:hover{border-color:var(--line2);box-shadow:none}
   .rm-sub{float:right;font:10px var(--mono);color:var(--lo);margin-left:10px}
+  /* Per-card AI-connection status (mirror of Claude Code's recorded choice) + re-arm */
+  .mcpstat{font:10px var(--mono);color:var(--lo);margin-top:2px}
+  .mcpstat .ok-j{color:var(--jade);font-weight:600}
+  .mcpstat .warn-a{color:var(--gold);font-weight:600}
+  .mcpstat .ghosty{color:var(--ghost)}
+  .rearm{color:var(--azure);cursor:pointer}
+  .rearm:hover{color:var(--violet)}
 </style>
 </head>
 <body>
@@ -344,7 +351,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <div class="g-item"><span class="n">2</span><span><b>One window per Plexus project.</b> A window is not the same as a terminal: the window is the whole editor frame, and terminals are the command panels that run <b>inside</b> a window. Every Plexus project you open gets its <b>own</b> window — opening a second Plexus project never touches the first. Two projects side by side means two windows, each with its own brain, engine, and terminals, fully independent.</span></div>
     <div class="g-item"><span class="n">3</span><span><b>Working on Plexus project B from inside project A's window.</b> Open a new terminal there (it starts linked to A). Copy B's <b>connect code</b> from its card, paste it in the terminal <b>before engaging the AI</b> — the terminal moves to B and the AI starts already linked to B. Never paste a connect code into an AI chat: it only works in the terminal. When that AI exits, the terminal falls back to A — to return to B, paste the code again, always before engaging the AI.</span></div>
     <div class="g-item"><span class="n">4</span><span><b>Non-Plexus work from inside a Plexus project's window.</b> Open a new terminal (it starts linked to the Plexus project). <b>Before engaging the AI</b>, move the terminal out: type <span class="mono">cd&nbsp;</span>, paste your non-Plexus folder's path, press enter — then engage the AI. That folder must live <b>outside</b> the Plexus project's folder, because anything inside a Plexus project's folder is treated as part of that Plexus project. The window's sidebar will still show the Plexus project — only that terminal points elsewhere.</span></div>
-    <div class="g-item"><span class="n">5</span><span><b>The first-time permission question.</b> The first time you engage an AI inside a Plexus project, it asks whether to use the Plexus connection it found in that project's folder. Choose <b>"Use this MCP server"</b> — it approves exactly what you can see, once per project, never asked again. (Skip "all future MCP servers": that pre-approves anything that might appear in the file someday; with the recommended option, a newcomer simply gets its own one-time question — your tripwire.) Declined by accident? Nothing is lost — run <span class="mono">claude mcp reset-project-choices</span> in a terminal inside the project and the question comes back.</span></div>
+    <div class="g-item"><span class="n">5</span><span><b>The first-time permission question.</b> The first time you engage an AI inside a Plexus project, it asks whether to use the Plexus connection it found in that project's folder. Choose <b>"Use this MCP server"</b> — it approves exactly what you can see, once per project, never asked again. (Skip "all future MCP servers": that pre-approves anything that might appear in the file someday; with the recommended option, a newcomer simply gets its own one-time question — your tripwire.) Changed your mind, or declined by accident? Each project card on the dashboard shows its current answer (approved / declined / awaiting) with a <b>re-arm ⟲</b> action — one click and the question returns on your next session, approving nothing by itself (same as running <span class="mono">claude mcp reset-project-choices</span> inside the project).</span></div>
     <div class="g-item"><span class="n">6</span><span><b>Know which project a session belongs to.</b> Every AI session connected to a Plexus project begins its replies with the badge <span class="mono">⬡ plexus active — name</span>. One glance at any terminal tells you exactly which Plexus project it is working on. No badge means that session is not connected to any Plexus project.</span></div>
     <div class="g-item"><span class="n">7</span><span><b>If you ask for the wrong project.</b> If you start describing work that belongs to a different project while inside the wrong session, Plexus stops before anything is written and shows you how to open the right project instead. Nothing mixes silently.</span></div>
     <div class="g-item"><span class="n">8</span><span><b>Coming back later.</b> To continue a Plexus project tomorrow — or after closing everything — open it the same way as the first time: click <b>Open project</b> on its card, or paste its connect code in a fresh terminal before engaging the AI (codes never expire). The new session automatically finds the project's brain and memory, which live inside the project's folder, and picks up where the last session left off. You never re-explain anything.</span></div>
@@ -480,6 +487,7 @@ async function loadProjects(){
         <div class="path">\${esc(p.path)}</div>
         <div class="ports">api :\${p.api_port} · brain :\${p.ws_port}</div>
         <div class="ports" id="pulse-\${p.api_port}"></div>
+        <div class="mcpstat">\${mcpStatusHtml(p)}</div>
       </div>
       <button onclick="resumeWith('\${esc(p.path)}')" title="open this Plexus project in a code editor with your chosen AI already engaged">Open project</button>
       <button onclick="serveProject('\${esc(p.path)}', \${p.ws_port})">\${p.running?'Open brain':'Start + open'}</button>
@@ -544,6 +552,27 @@ async function undoForget(){
   LAST_FORGOTTEN=null; dismissToast(); loadProjects();
 }
 function copyText(t, btn){navigator.clipboard.writeText(t);if(btn){const o=btn.textContent;btn.textContent='copied ✓';setTimeout(()=>btn.textContent=o,1500);}}
+
+// AI-connection status per card: mirrors what Claude Code recorded for this
+// project's permission question; re-arm resets it from ANY state (approving
+// nothing) so the question returns on the next session.
+function mcpStatusHtml(p){
+  var s=p.mcp_status;
+  var re='<span class="rearm" data-p="'+esc(p.path)+'" onclick="rearmMcp(this)" title="Resets the recorded choice for this project — approves nothing by itself; the next AI session here shows the permission question again.">re-arm ⟲</span>';
+  if(s==='approved') return 'AI connection: <b class="ok-j">approved ✓</b> · '+re;
+  if(s==='approved_all') return 'AI connection: <b class="warn-a">approved — ALL future servers ⚠</b> · '+re+' <span class="ghosty">(re-arm to pick the narrower option)</span>';
+  if(s==='declined') return 'AI connection: <b class="warn-a">declined ⚠</b> — sessions here run without Plexus · '+re;
+  if(s==='unasked') return 'AI connection: <span class="ghosty">awaiting first session — the question will appear</span>';
+  return '';
+}
+function rearmMcp(el){
+  el.textContent='re-arming…';
+  fetch('/api/launcher/rearm-mcp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:el.getAttribute('data-p')})})
+    .then(function(x){return x.json();}).then(function(r){
+      if(r.ok){ el.outerHTML='<span class="ok-j">✓ re-armed — the question returns on the next session</span>'; setTimeout(loadProjects, 2600); }
+      else { el.textContent='re-arm failed'+(r.error?': '+r.error:''); }
+    }).catch(function(){ el.textContent='re-arm failed'; });
+}
 
 // burger menu + launch guide
 function toggleMenu(e){ e.stopPropagation(); document.getElementById('topmenu').classList.toggle('show'); }

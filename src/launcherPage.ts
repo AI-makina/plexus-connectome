@@ -265,24 +265,18 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
         <div class="vid-powered"><img src="/assets/launcher/skyfynd_logo.png" alt="SkyFynd"> Powered by&nbsp;<a href="https://skyfynd.io" target="_blank" rel="noopener">Skyfynd.io</a></div>
       </div>
     </div>
-    <!-- step 2 · connect your AI (one time) -->
+    <!-- step 2 · how Plexus connects (per project — nothing to install) -->
     <div class="wstep" data-step="2">
       <div class="wiz-brand"><img src="/assets/launcher/plexus_icon_2_ultrablack.png" alt=""><span class="wiz-wordmark">Plexus</span></div>
-      <div class="wiz-h">Connect Plexus to your AI</div>
-      <div class="wiz-p">One time. After this, any project you open in a connected AI finds its brain automatically — nothing to point, nothing to pin.</div>
+      <div class="wiz-h">Plexus connects per project</div>
+      <div class="wiz-p">Nothing to install — and no AI is ever permanently connected. Every project you create or connect here carries its own Plexus connection inside its folder: open your AI there and it finds the brain automatically, asking your permission once per project. Anywhere else, your AI stays exactly as it is — plexus-free.</div>
       <div style="text-align:left">
-        <div class="opt-label">Option 1 · Connect an app</div>
-        <div style="text-align:center;margin:6px 0 4px"><button class="primary" id="wiz-search" onclick="wizSearch(this)">⌕ Search this Mac for AI apps</button></div>
+        <div style="text-align:center;margin:6px 0 4px"><button class="primary" id="wiz-search" onclick="wizSearch(this)">⌕ See which AI apps this Mac has</button></div>
         <div id="wiz-clients"></div>
-        <div class="opt-note">Every model a connected app runs — Claude, Gemini, GPT, local — automatically uses the brain of whichever Plexus project you open there.</div>
-        <div class="opt-label">Option 2 · Use your terminal instead</div>
-        <div class="cmd" id="wiz-global-cmd" onclick="copyGlobal(this)">loading…</div>
-        <div class="opt-note">The exact same one-time connection for Claude Code, done by hand. Either way, afterwards you just open your AI inside a project folder and talk.</div>
       </div>
       <div id="wiz-connect-result"></div>
       <div class="wiz-actions">
         <button class="primary" onclick="wizStep(3)">Next</button>
-        <span class="wiz-skip" onclick="wizStep(3)">I'll connect later →</span>
       </div>
     </div>
     <!-- step 3 · first project -->
@@ -369,7 +363,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
       <p class="hint" id="conn-sub" style="margin:2px 0 6px"></p>
       <div id="home-clients"></div>
       <div id="home-connect-result"></div>
-      <p class="hint" style="margin-top:8px"><span class="mono" id="conn-manage" style="cursor:pointer;color:var(--azure)" onclick="toggleConnections(this)">manage connections ▾</span> &nbsp;·&nbsp; Prefer a terminal? <span class="mono" style="cursor:pointer;color:var(--azure)" onclick="copyGlobal(this)">copy the one-time command ⧉</span></p>
+      <p class="hint" style="margin-top:8px"><span class="mono" id="conn-manage" style="cursor:pointer;color:var(--azure)" onclick="toggleConnections(this)">detected AI tools ▾</span></p>
     </div>
     <div class="cards">
       <div class="card new" onclick="show('v-new')">
@@ -431,9 +425,8 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','
 async function loadProjects(){
   const r = await fetch('/api/launcher/projects').then(x=>x.json());
   document.getElementById('np-base').value ||= r.default_base;
-  if(r.global_mcp) GLOBAL_MCP = r.global_mcp;
   const el = document.getElementById('projects');
-  if(!r.projects.length){el.innerHTML='<p class="hint">No brains yet — talk to your AI (after the one-time command above), or use the cards.</p>';return;}
+  if(!r.projects.length){el.innerHTML='<p class="hint">No brains yet — create or connect a project with the cards above; each one carries its own AI connection.</p>';return;}
   el.innerHTML = r.projects.map(p=>\`
     <div class="proj">
       <div class="dot \${p.running?'on':''}"></div>
@@ -654,53 +647,40 @@ function wizStep(n){
   if(n>=2){ // reaching the setup windows = pitch seen once — never replay the wizard as a nag
     fetch('/api/launcher/onboarding/complete',{method:'POST'}).catch(function(){});
   }
-  if(n===2){ // detection is on-request (the Search button) — only prefill the terminal command
-    var g=document.getElementById('wiz-global-cmd');
-    if(g){ if(GLOBAL_MCP) g.textContent=GLOBAL_MCP;
-      else fetch('/api/launcher/clients').then(function(x){return x.json();}).then(function(r){ GLOBAL_MCP=r.global_mcp||''; if(GLOBAL_MCP) g.textContent=GLOBAL_MCP; }).catch(function(){}); }
-  }
 }
 function replayIntro(){ document.getElementById('wizard').classList.add('show'); wizStep(0); }
 function wizSearch(btn){
   btn.disabled=true; btn.textContent='searching…';
-  renderClients(document.getElementById('wiz-clients'), 'wiz-connect-result').then(function(){
+  renderClients(document.getElementById('wiz-clients')).then(function(){
     btn.parentElement.style.display='none';
-    var g=document.getElementById('wiz-global-cmd'); if(g && GLOBAL_MCP) g.textContent=GLOBAL_MCP;
-  }).catch(function(){ btn.disabled=false; btn.textContent='⌕ Search this Mac for AI apps'; });
+  }).catch(function(){ btn.disabled=false; btn.textContent='⌕ See which AI apps this Mac has'; });
 }
 function startPresentation(){ wizStep(1); }
 // advance only if the presentation is actually on screen (guards stray ended events)
 function vidEnded(){ var s=document.querySelector('.wstep[data-step="1"]'); if(s && s.classList.contains('active')) wizStep(2); }
-// ── ONE source of truth for AI connections — renders the same client rows in the
-// wizard (step 2) AND the dashboard panel, so connecting in either place is the
-// same act and both surfaces always agree. Returns the installed clients.
-var GLOBAL_MCP='';
+// ── AI-tool detection — INFORMATIONAL only (Integration v2): Plexus never
+// registers itself into an AI globally. Each project carries its own
+// connection; this roster just shows which AI apps live on this Mac.
 var INSTALLED=[]; // last detection result (installed clients) — shared by results screens
-function copyGlobal(el){ if(!GLOBAL_MCP) return; navigator.clipboard.writeText(GLOBAL_MCP); var o=el.textContent; el.textContent='copied ✓'; setTimeout(function(){el.textContent=o;},1500); }
-function renderClients(listEl, resultId){
+function renderClients(listEl){
   listEl.innerHTML = '<div class="hint">detecting your AI tools…</div>';
   return fetch('/api/launcher/clients').then(function(x){return x.json();}).then(function(r){
-    GLOBAL_MCP = r.global_mcp || '';
     // Only what's actually ON this machine — an uninstalled app is noise, not a choice.
     var inst = (r.clients || []).filter(function(c){ return c.installed; });
     INSTALLED = inst;
     if(!inst.length){
-      listEl.innerHTML = '<div class="hint">No AI tools detected on this machine. Install one (Claude Code, Antigravity, Cursor…), or paste this into any MCP-capable client:</div>'
-        + '<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(GLOBAL_MCP)+'</div>';
+      listEl.innerHTML = '<div class="hint">No AI tools detected on this machine yet. Install one (Claude Code, Cursor, Antigravity…) — your Plexus projects connect to it automatically, per project.</div>';
       return inst;
     }
     listEl.innerHTML = inst.map(function(c){
-      var state = c.connected===true ? 'connected' : (c.connected===false ? 'not connected' : 'detected');
-      var right = c.connected===true ? '<span class="ok">✓</span>' : '<button data-result="'+resultId+'" onclick="connectClient(\\''+c.id+'\\',this)">Connect</button>';
-      return '<div class="clientrow"><div class="ci"><b>'+esc(c.label)+'</b><span class="c-state">'+state+'</span>'+(c.hint?'<div class="c-hint">'+esc(c.hint)+'</div>':'')+'</div>'+right+'</div>';
+      return '<div class="clientrow"><div class="ci"><b>'+esc(c.label)+'</b><span class="c-state">detected</span>'+(c.hint?'<div class="c-hint">'+esc(c.hint)+'</div>':'')+'</div><span class="ok">✓</span></div>';
     }).join('');
     return inst;
   });
 }
 function loadWizClients(){
-  renderClients(document.getElementById('wiz-clients'), 'wiz-connect-result').then(function(){
-    var g = document.getElementById('wiz-global-cmd'); if(g && GLOBAL_MCP) g.textContent = GLOBAL_MCP;
-  }).catch(function(){ document.getElementById('wiz-clients').innerHTML='<div class="hint">could not detect AI tools</div>'; });
+  renderClients(document.getElementById('wiz-clients'))
+    .catch(function(){ document.getElementById('wiz-clients').innerHTML='<div class="hint">could not detect AI tools</div>'; });
 }
 
 // ── Post-create handoff: one-click "open your AI in this project" ──
@@ -724,56 +704,27 @@ function openProjectIn(btn){
     }).catch(function(){ btn.disabled=false; btn.textContent=orig; });
 }
 function connectedNote(){
-  var conn=(INSTALLED||[]).filter(function(c){ return c.connected===true; });
-  if(conn.length) return '<div class="hint" style="margin:4px 0 10px">✓ '+esc(conn.map(function(c){return c.label;}).join(', '))+' is connected — opening it in this folder finds the brain automatically. Just talk about your app.</div>';
-  return '<div class="hint" style="margin:4px 0 10px">Your AI is not connected yet — do the one-time connect at the top of this page first (or copy its terminal command).</div>';
+  return '<div class="hint" style="margin:4px 0 10px">✓ This project carries its own Plexus connection — open your AI inside its folder and it finds the brain automatically (it asks your permission once, the first time). Just talk about your app.</div>';
 }
 function loadConnections(){
-  // Status line only — the client rows appear on request via "manage connections".
+  // Status line only — the detected-tools rows appear on request.
   var head = document.getElementById('conn-head'), sub = document.getElementById('conn-sub');
   if(!head) return;
   fetch('/api/launcher/clients').then(function(x){return x.json();}).then(function(r){
-    GLOBAL_MCP = r.global_mcp || GLOBAL_MCP;
     var inst = (r.clients||[]).filter(function(c){ return c.installed; });
     INSTALLED = inst;
-    var conn = inst.filter(function(c){ return c.connected===true; });
-    if(conn.length){
-      head.textContent = '⬡ Your AI is connected — ' + conn.map(function(c){return c.label;}).join(', ');
-      sub.textContent = 'Open your AI in any project folder and just talk — Plexus finds the right brain automatically. The cards below are optional manual paths; this page is your dashboard.';
-    } else if(inst.length){
-      head.textContent = '⬡ Connect your AI — one time';
-      sub.textContent = 'Use manage connections below to link the AI tools you use. After that, every project works automatically.';
-    } else {
-      head.textContent = '⬡ Connect your AI';
-      sub.textContent = 'No AI tools detected yet — manage connections has the universal command.';
-    }
-  }).catch(function(){ head.textContent='⬡ Your AI connections'; });
+    head.textContent = '⬡ Plexus connects per project';
+    sub.textContent = inst.length
+      ? 'Nothing to install — each project carries its own connection, and AIs opened anywhere else stay plexus-free. Detected on this Mac: ' + inst.map(function(c){return c.label;}).join(', ') + '.'
+      : 'Nothing to install — each project carries its own connection. No AI tools detected on this Mac yet.';
+  }).catch(function(){ head.textContent='⬡ Plexus connects per project'; });
 }
 function toggleConnections(el){
   var list = document.getElementById('home-clients');
-  if(list.innerHTML){ list.innerHTML=''; document.getElementById('home-connect-result').innerHTML=''; el.textContent='manage connections ▾'; return; }
+  if(list.innerHTML){ list.innerHTML=''; document.getElementById('home-connect-result').innerHTML=''; el.textContent='detected AI tools ▾'; return; }
   el.textContent='searching…';
-  renderClients(list, 'home-connect-result').then(function(){ el.textContent='hide ▴'; })
-    .catch(function(){ el.textContent='manage connections ▾'; });
-}
-function connectClient(id, btn){
-  var box = document.getElementById(btn.getAttribute('data-result'));
-  btn.disabled=true; btn.textContent='connecting…';
-  fetch('/api/launcher/connect-mcp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client:id})})
-    .then(function(x){return x.json();}).then(function(r){
-      if(r.ok && r.ran){ btn.textContent='connected ✓'; if(box) box.innerHTML='<div class="wiz-ok">✓ Connected. Plexus now works in every project for this AI.</div>';
-        setTimeout(function(){
-          loadConnections();
-          // refresh whichever row-lists are actually open (never populate unrequested)
-          var wl=document.getElementById('wiz-clients'); if(document.getElementById('wizard').classList.contains('show') && wl && wl.innerHTML) loadWizClients();
-          var hl=document.getElementById('home-clients'); if(hl && hl.innerHTML) renderClients(hl,'home-connect-result');
-        }, 600); }
-      else if(r.ok && r.already){ btn.textContent='already connected ✓'; }
-      else if(r.manual){ btn.disabled=false; btn.textContent='Connect';
-        var where = r.config_path ? 'Merge this into <span class="mono" style="color:var(--ice)">'+esc(r.config_path)+'</span> — then restart it:' : 'Add this to '+esc(id)+' MCP config, then reopen it:';
-        if(box) box.innerHTML='<div class="wiz-manual">'+where+'<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(r.config_json||r.command)+'</div></div>'; }
-      else { btn.disabled=false; btn.textContent='Connect'; if(box) box.innerHTML='<div class="wiz-manual">Run this in a terminal:<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(r.command)+'</div>'+(r.error?'<div class="hint">'+esc(r.error)+'</div>':'')+'</div>'; }
-    }).catch(function(){ btn.disabled=false; btn.textContent='Connect'; });
+  renderClients(list).then(function(){ el.textContent='hide ▴'; })
+    .catch(function(){ el.textContent='detected AI tools ▾'; });
 }
 function wizFinish(view){
   fetch('/api/launcher/onboarding/complete',{method:'POST'}).catch(function(){});

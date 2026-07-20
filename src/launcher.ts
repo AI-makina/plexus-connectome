@@ -125,10 +125,9 @@ function mcpServerSpec(): { command: string; args: string[] } {
     if (process.platform !== 'win32' && fs.existsSync(SHIM_PATH)) return { command: SHIM_PATH, args: ['mcp'] };
     return { command: process.execPath, args: [CLI, 'mcp'] };
 }
-function globalMcpCmd(): string {
-    const s = mcpServerSpec();
-    return `claude mcp add --scope user plexus -- "${s.command}" ${s.args.map(a => (a === 'mcp' ? 'mcp' : `"${a}"`)).join(' ')}`;
-}
+// (Integration v2) globalMcpCmd() was removed with every global-registration
+// surface: Plexus connects per project via .mcp.json written at create/connect,
+// and no AI is ever permanently connected. The -p CLI flag remains for dev use.
 
 // Is a command on PATH? (detect installed AI clients / editors)
 function onPath(cmd: string): boolean {
@@ -274,10 +273,6 @@ export function startLauncher(open = true) {
         res.json({
             projects: out,
             default_base: loadPrefs().lastBase || path.join(os.homedir(), 'PlexusProjects'),
-            // The AI-first path: register ONCE (user scope, no project path) —
-            // the plug resolves the brain from wherever a session is opened,
-            // and init_project lets the AI create brains itself.
-            global_mcp: globalMcpCmd(),
         });
     });
 
@@ -716,47 +711,16 @@ export function startLauncher(open = true) {
 
     // ── AI clients: which are installed + (Claude Code only) is Plexus already connected ──
     app.get('/api/launcher/clients', async (_req, res) => {
-        res.json({ clients: await detectClients(), global_mcp: globalMcpCmd() });
+        res.json({ clients: await detectClients() });
     });
 
-    // ── Connect Plexus to an AI client (one-time). Claude Code = run it for the user;
-    // other clients = hand back the config/command to paste. User-initiated only. ──
-    app.post('/api/launcher/connect-mcp', (req, res) => {
-        const client = String(req.body?.client || 'claude');
-        const spec = ensureShim() ? mcpServerSpec() : { command: process.execPath, args: [CLI, 'mcp'] };
-        const globalCmd = globalMcpCmd();
-        if (client === 'claude') {
-            try {
-                const out = execFileSync('claude', ['mcp', 'add', '--scope', 'user', 'plexus', '--', spec.command, ...spec.args], { encoding: 'utf8', timeout: 15000 });
-                clientsCache = null; // re-detect so the ✓ shows immediately
-                return res.json({ ok: true, ran: true, output: String(out).trim(), command: globalCmd });
-            } catch (err: any) {
-                const msg = String(err?.stderr || err?.message || err);
-                const already = /already (exists|configured|added)/i.test(msg);
-                return res.json({ ok: already, ran: false, already, error: already ? undefined : msg, command: globalCmd });
-            }
-        }
-        if (client === 'codex') {
-            // Codex CLI has its own registration command; it writes ~/.codex/config.toml globally.
-            try {
-                execFileSync('codex', ['mcp', 'add', 'plexus', '--', spec.command, ...spec.args], { encoding: 'utf8', timeout: 15000 });
-                clientsCache = null;
-                return res.json({ ok: true, ran: true, command: globalCmd });
-            } catch { /* older codex / not on PATH — fall through to the manual TOML below */ }
-        }
-        // Everyone else (and codex fallback): hand back the server config to paste — in THAT
-        // client's format, with the exact file path when its config location is known.
-        const known = AI_CLIENTS.find(c => c.id === client);
-        let snippet = JSON.stringify({ mcpServers: { plexus: spec } }, null, 2);
-        if (client === 'code') snippet = JSON.stringify({ servers: { plexus: spec } }, null, 2); // VS Code mcp.json uses "servers"
-        if (client === 'codex') snippet = `[mcp_servers.plexus]\ncommand = "${spec.command}"\nargs = [${spec.args.map(a => `"${a}"`).join(', ')}]`; // TOML
+    // ── (Integration v2) Global registration REMOVED. Plexus connects per
+    // project (.mcp.json written at create/connect); no AI is ever permanently
+    // connected. Stub kept so any stale UI gets an honest answer, not a 404.
+    app.post('/api/launcher/connect-mcp', (_req, res) => {
         res.json({
-            ok: false, ran: false, manual: true, command: globalCmd,
-            config_path: known?.mcpConfig,
-            config_json: snippet,
-            note: known?.mcpConfig
-                ? `Merge this into the file, then restart ${known.label}.`
-                : `Add Plexus to ${known?.label || client}'s MCP config, then reopen it.`,
+            ok: false, removed: true,
+            note: 'Global registration was removed — every Plexus project carries its own connection (.mcp.json in its folder). There is nothing to install; open your AI inside a project and it connects automatically.',
         });
     });
 

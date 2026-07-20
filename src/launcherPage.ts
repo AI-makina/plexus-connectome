@@ -257,8 +257,18 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .mcpstat .ghosty{color:var(--ghost)}
   .rearm{color:var(--azure);cursor:pointer}
   .rearm:hover{color:var(--violet)}
-  .qmark{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid var(--line2);color:var(--lo);font:600 9px var(--mono);cursor:help;vertical-align:middle}
+  .qmark{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid var(--line2);color:var(--lo);font:600 9px var(--mono);cursor:pointer;vertical-align:middle;transition:background .15s,color .15s,border-color .15s}
   .qmark:hover{color:var(--ice);border-color:rgba(167,139,250,.55)}
+  /* click-to-open glass popover; the ? fills violet while open */
+  .qwrap{position:relative;display:inline-flex}
+  .qwrap.open .qmark{background:var(--violet);color:#0A0714;border-color:var(--violet)}
+  .qpop{display:none;position:absolute;left:50%;transform:translateX(-50%);bottom:23px;width:272px;
+    background:rgba(16,13,28,.92);border:1px solid rgba(167,139,250,.4);border-radius:11px;padding:10px 12px;
+    font:11.5px var(--sans);color:var(--ice);line-height:1.55;z-index:70;text-align:left;letter-spacing:0;text-transform:none;white-space:normal;
+    backdrop-filter:blur(20px) saturate(1.3);-webkit-backdrop-filter:blur(20px) saturate(1.3);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.08), 0 10px 30px rgba(0,0,0,.5), 0 0 24px rgba(139,92,246,.12)}
+  .qpop::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:6px solid transparent;border-top-color:rgba(167,139,250,.4)}
+  .qwrap.open .qpop{display:block}
 </style>
 </head>
 <body>
@@ -572,7 +582,7 @@ function mcpStatusHtml(p){
   if(s==='approved') return 'AI connection: <b class="ok-j">approved ✓</b> · '+re;
   if(s==='approved_all') return 'AI connection: <b class="warn-a">approved — ALL future servers ⚠</b> · '+re+' <span class="ghosty">(re-arm to pick the narrower option)</span>';
   if(s==='declined') return 'AI connection: <b class="warn-a">declined ⚠</b> — sessions here run without Plexus · '+re;
-  if(s==='unasked') return 'AI connection: <span class="qmark" title="Awaiting first session — the AI will ask to approve Plexus the first time you open this project. Choose &quot;Use this MCP server&quot;.">?</span>';
+  if(s==='unasked') return 'AI connection: <span class="qwrap"><span class="qmark" onclick="toggleQ(this,event)">?</span><span class="qpop">Awaiting first session — the AI will ask to approve Plexus the first time you open this project. Choose "Use this MCP server".</span></span>';
   return '';
 }
 function rearmMcp(el){
@@ -589,7 +599,14 @@ function toggleMenu(e){ e.stopPropagation(); document.getElementById('topmenu').
 document.addEventListener('click', function(e){
   var m=document.getElementById('topmenu');
   if(m && m.classList.contains('show') && !e.target.closest('.burger-wrap')) m.classList.remove('show');
+  if(!e.target.closest('.qwrap')) document.querySelectorAll('.qwrap.open').forEach(function(x){ x.classList.remove('open'); });
 });
+function toggleQ(el, e){
+  e.stopPropagation();
+  var w=el.parentElement, was=w.classList.contains('open');
+  document.querySelectorAll('.qwrap.open').forEach(function(x){ x.classList.remove('open'); });
+  if(!was) w.classList.add('open');
+}
 function openGuide(){ document.getElementById('topmenu').classList.remove('show'); document.getElementById('guide-modal').classList.add('show'); }
 function closeGuide(){ document.getElementById('guide-modal').classList.remove('show'); }
 

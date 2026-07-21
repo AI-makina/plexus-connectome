@@ -930,7 +930,7 @@ function renderResume(force){
         rows+='<button onclick="toggleCodexHow(this)">'+esc(c.label)+'<span class="rm-sub">global-only — tap to see how to connect</span></button>'
           +'<div class="codexhow" style="display:none">Codex only supports a global connection (OpenAI\\'s design), and Plexus never connects an AI globally — <b>you</b> do it: copy this, paste it in <b>any</b> terminal, press enter. One time per machine; undo anytime with the Disengage button (☰ → Manage connections).'
           +'<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(c.connect_command)+'</div>'
-          +'<span class="wiz-skip" onclick="renderResume(true)">I ran it — ⌕ search again</span></div>';
+          +'After running it, hit <b>⌕ search again</b> below — Codex will show Plexus-ready.</div>';
       }
       else{ rows+='<button class="dis" disabled title="Only MCP-capable, Plexus-connected AIs can use the brain — see AI Guidelines (☰).">'+esc(c.label)+'<span class="rm-sub">'+(c.mcp?'no per-project connection':'not MCP-capable')+'</span></button>'; }
     });

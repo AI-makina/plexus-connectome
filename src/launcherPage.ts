@@ -360,7 +360,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <div class="opt-label">2 · AI to engage</div>
     <div class="rm-clients" id="rm-ais"></div>
     <div style="text-align:center;margin:10px 0 4px"><button class="primary" id="rm-open" onclick="doOpenProject(this)">Open</button></div>
-    <div class="cmd" id="rm-cmd" onclick="copyText(this.textContent,null)"></div>
+    <div class="cmd" id="rm-cmd" onclick="copyText(this.textContent,this)"></div>
     <div class="hint" id="rm-note">A new editor window opens anchored to this Plexus project — your chosen AI starts automatically in its terminal.</div>
     <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center"><span class="wiz-skip" onclick="rescanResume(this)">⌕ search again</span><button class="ghost" onclick="closeResume()">close</button></div>
   </div>
@@ -601,7 +601,20 @@ async function undoForget(){
   await fetch('/api/launcher/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({entry:LAST_FORGOTTEN})});
   LAST_FORGOTTEN=null; dismissToast(); loadProjects();
 }
-function copyText(t, btn){navigator.clipboard.writeText(t);if(btn){const o=btn.textContent;btn.textContent='copied ✓';setTimeout(()=>btn.textContent=o,1500);}}
+// Copy with a legacy fallback (Safari can refuse navigator.clipboard on plain
+// http) and ALWAYS show feedback — success and silence must never look alike.
+function copyText(t, el){
+  var done=function(){ if(el){ var o=el.textContent; el.textContent='copied ✓'; setTimeout(function(){ el.textContent=o; },1200); } };
+  var legacy=function(){
+    var ta=document.createElement('textarea'); ta.value=t; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); }catch(e){}
+    ta.remove(); done();
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t).then(done).catch(legacy);
+  } else { legacy(); }
+}
 
 // AI-connection status per card: mirrors what Claude Code recorded for this
 // project's permission question; re-arm resets it from ANY state (approving
@@ -870,7 +883,7 @@ function renderTools(force){
       var right=c.custom?'<button class="ghost" data-bin="'+esc(c.id.slice(7))+'" onclick="removeCustomAi(this)">✕</button>'
         :(c.global_connection?'<button class="ghost" onclick="disengageCodex(this)" title="Removes Plexus\\'s own entry from Codex\\'s settings (via Codex\\'s CLI). Reconnecting later is the same one-time paste.">Disengage</button>'
         :'<span class="ok">'+(c.mcp&&c.project_wired?'✓':'·')+'</span>');
-      var extra=(c.connect_command?'<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(c.connect_command)+'</div>':'');
+      var extra=(c.connect_command?'<div class="cmd" onclick="copyText(this.textContent,this)">'+esc(c.connect_command)+'</div>':'');
       return '<div class="clientrow"><div class="ci"><b>'+esc(c.label)+'</b><span class="c-state">'+st+'</span>'+(c.hint?'<div class="c-hint">'+esc(c.hint)+'</div>':'')+extra+'</div>'+right+'</div>';
     }).join(''):'<div class="hint">No AI CLIs detected yet.</div>';
   }).catch(function(){ eEl.innerHTML='<div class="hint">detection failed — try ⌕ search again.</div>'; });
@@ -946,7 +959,7 @@ function renderResume(force){
       else if(c.connect_command){
         rows+='<button onclick="toggleCodexHow(this)">'+esc(c.label)+'<span class="rm-sub">global-only — tap to see how to connect</span></button>'
           +'<div class="codexhow" style="display:none">Codex only supports a global connection (OpenAI\\'s design), and Plexus never connects an AI globally — <b>you</b> do it: copy this, paste it in <b>any</b> terminal, press enter. One time per machine; undo anytime with the Disengage button in <span class="golink" onclick="closeResume();openTools()">Manage connections</span>. <span class="golink" onclick="openCodexLearn()">Learn more</span> about what this entails.'
-          +'<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(c.connect_command)+'</div>'
+          +'<div class="cmd" onclick="copyText(this.textContent,this)">'+esc(c.connect_command)+'</div>'
           +'After running it, hit <b>⌕ search again</b> below — Codex will show Plexus-ready.</div>';
       }
       else{ rows+='<button class="dis" disabled title="Only MCP-capable, Plexus-connected AIs can use the brain — see AI Guidelines (☰).">'+esc(c.label)+'<span class="rm-sub">'+(c.mcp?'no per-project connection':'not MCP-capable')+'</span></button>'; }

@@ -595,12 +595,12 @@ function mcpStatusHtml(p){
   var re=rearmLink(p.path);
   var s=p.mcp_status;
   // which option was chosen, when the record knows (1 = plexus only, 2 = blanket)
-  var optTag = s==='approved' ? ' <span class="ghosty">· Plexus MCP only</span>'
-             : s==='approved_all' ? ' <b class="warn-a">· Plexus + ALL future MCPs ⚠</b>' : '';
+  var optTag = s==='approved' ? ' <b class="ok-j">· Plexus MCP only</b>'
+             : s==='approved_all' ? ' <b class="ok-j">· Plexus + ALL future MCPs</b>' : '';
   // ground truth first: a live plexus process anchored in this project right now
   if(p.live_session) return 'AI connection: <b class="ok-j">connected ✓</b> <span class="ghosty">· session open now</span>'+optTag+' · '+re;
-  if(s==='approved') return 'AI connection: <b class="ok-j">approved ✓</b> <span class="ghosty">· Plexus MCP only</span> · '+re;
-  if(s==='approved_all') return 'AI connection: <b class="warn-a">approved ✓ — Plexus + ALL future MCPs ⚠</b> · '+re+' <span class="ghosty">(re-arm to pick the narrower option)</span>';
+  if(s==='approved') return 'AI connection: <b class="ok-j">approved ✓ · Plexus MCP only</b> · '+re;
+  if(s==='approved_all') return 'AI connection: <b class="ok-j">approved ✓ · Plexus + ALL future MCPs</b> · '+re+' <span class="ghosty">(re-arm to pick the narrower option)</span>';
   if(s==='declined') return 'AI connection: <b class="warn-a">declined ⚠</b> — sessions here run without Plexus · '+re;
   if(s==='unasked') return 'AI connection: <span class="qwrap"><span class="qmark" onclick="toggleQ(this,event)">?</span><span class="qpop">Awaiting first session — the AI will ask to approve Plexus the first time you open this project. Choose "Use this MCP server".</span></span> · '+re;
   return '';

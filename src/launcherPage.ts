@@ -256,6 +256,16 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .codexhow b{color:var(--hi)}
   .golink{color:var(--azure);cursor:pointer;border-bottom:1px dotted rgba(111,168,255,.5)}
   .golink:hover{color:var(--violet);border-color:var(--violet)}
+  /* Themed tooltips: any element with data-tip shows a glass mini-popover on
+     hover — native gray title boxes are banned from the dashboard. */
+  [data-tip]{position:relative}
+  [data-tip]:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);
+    width:max-content;max-width:270px;background:rgba(16,13,28,.95);border:1px solid rgba(167,139,250,.4);border-radius:9px;
+    padding:7px 11px;font:11px var(--sans);color:var(--ice);line-height:1.5;white-space:normal;z-index:85;text-align:left;
+    letter-spacing:0;text-transform:none;font-weight:400;pointer-events:none;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.07), 0 8px 24px rgba(0,0,0,.5)}
+  [data-tip]:hover::before{content:'';position:absolute;bottom:calc(100% + 2px);left:50%;transform:translateX(-50%);
+    border:6px solid transparent;border-top-color:rgba(167,139,250,.4);z-index:85;pointer-events:none}
   /* destructive action: red, unambiguous */
   button.danger{background:transparent;color:var(--crimson);border-color:rgba(229,72,77,.45)}
   button.danger:hover{color:var(--crimson);border-color:var(--crimson);box-shadow:0 0 14px rgba(229,72,77,.28)}
@@ -266,7 +276,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .mcpstat .ghosty{color:var(--ghost)}
   .rearm{color:var(--azure);cursor:pointer}
   .rearm:hover{color:var(--violet)}
-  .rearm.rearm-off{opacity:.35;cursor:default;pointer-events:none}
+  .rearm.rearm-off{opacity:.35;cursor:default}
   .rearmnote{color:var(--gold);font-weight:600;text-shadow:0 0 9px rgba(245,192,68,.65), 0 0 20px rgba(245,192,68,.3);animation:pulse 2.2s ease-in-out infinite}
   .qmark{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid var(--line2);color:var(--lo);font:600 9px var(--mono);cursor:pointer;vertical-align:middle;transition:background .15s,color .15s,border-color .15s}
   .qmark:hover{color:var(--ice);border-color:rgba(167,139,250,.55)}
@@ -438,10 +448,10 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   <header>
     <img class="brand-icon" src="/assets/launcher/plexus_icon_1.png" alt=""><h1>PLEXUS</h1><span class="tag">launcher · evidence protocol</span>
     <span style="margin-left:auto;display:flex;gap:16px;align-items:baseline">
-      <span onclick="replayIntro()" style="cursor:pointer;color:var(--lo);font:500 11px var(--mono)" title="watch the Plexus intro again">intro ⟲</span>
+      <span onclick="replayIntro()" style="cursor:pointer;color:var(--lo);font:500 11px var(--mono)" data-tip="watch the Plexus intro again">intro ⟲</span>
       <a href="/manager" style="color:var(--azure);text-decoration:none;font:500 12px var(--sans)">Manager →</a>
       <span class="burger-wrap">
-        <span class="burger" onclick="toggleMenu(event)" title="menu">☰</span>
+        <span class="burger" onclick="toggleMenu(event)" data-tip="menu">☰</span>
         <div class="menu" id="topmenu">
           <div class="menu-sec">Guidelines</div>
           <div class="menu-item" onclick="openGuide()">Launch Guide</div>
@@ -533,10 +543,10 @@ async function loadProjects(){
         <div class="mcpstat" id="mcp-\${p.api_port}" data-path="\${esc(p.path)}">\${mcpStatusHtml(p)}</div>
       </div>
       <div class="pacts">
-        <button onclick="resumeWith('\${esc(p.path)}')" title="open this Plexus project in a code editor with your chosen AI already engaged">Open project</button>
+        <button onclick="resumeWith('\${esc(p.path)}')" data-tip="Open this Plexus project in a code editor with your chosen AI already engaged.">Open project</button>
         <button onclick="serveProject('\${esc(p.path)}', \${p.ws_port})">\${p.running?'Open brain':'Start + open'}</button>
-        <button class="ghost" title="Copy this project's connect code — paste it in a TERMINAL (not into an AI chat) and that terminal becomes this project's AI session, wherever it started." onclick="copyText(\\\`\${esc(p.connect_code||'')}\\\`, this)">connect code ⧉</button>
-        <span class="xwrap"><button class="ghost" title="Remove from the launcher list (nothing on disk is touched) — asks to confirm, then offers Undo." onclick="askForget(this,'\${esc(p.path)}')">✕</button></span>
+        <button class="ghost" data-tip="Copy this project's connect code — paste it in a TERMINAL (not into an AI chat) and that terminal becomes this project's AI session, wherever it started." onclick="copyText(\\\`\${esc(p.connect_code||'')}\\\`, this)">connect code ⧉</button>
+        <span class="xwrap"><button class="ghost" data-tip="Remove from the launcher list (nothing on disk is touched) — asks to confirm, then offers Undo." onclick="askForget(this,'\${esc(p.path)}')">✕</button></span>
       </div>
     </div>\`).join('');
   // Reassurance pulse: proof the AI is actually leaning on each brain
@@ -625,7 +635,7 @@ function copyText(t, el){
 // nothing) so the question returns on the next session.
 var REARMED={}; // paths re-armed this page-visit: keep the instruction visible across card re-renders
 function rearmLink(path){
-  return '<span class="rearm" data-p="'+esc(path)+'" onclick="rearmMcp(this)" title="Resets the recorded choice for this project — approves nothing by itself; the next AI session here shows the permission question again.">re-arm ⟲</span>';
+  return '<span class="rearm" data-p="'+esc(path)+'" onclick="rearmMcp(this)" data-tip="Resets the recorded choice for this project — approves nothing by itself; the next AI session here shows the permission question again.">re-arm ⟲</span>';
 }
 function mcpStatusHtml(p){
   if(REARMED[p.path]) return 'AI connection: <span class="rearmnote">re-armed ✓ — close the open terminal(s) for this project; the permission question returns on the next session</span>';
@@ -639,7 +649,7 @@ function mcpStatusHtml(p){
   if(s==='approved') return 'AI connection: <b class="ok-j">approved ✓ · Plexus MCP only</b> · '+re;
   if(s==='approved_all') return 'AI connection: <b class="ok-j">approved ✓ · Plexus + ALL future MCPs</b> · '+re+' <span class="ghosty">(re-arm to pick the narrower option)</span>';
   if(s==='declined') return 'AI connection: <b class="warn-a">declined ⚠</b> — sessions here run without Plexus · '+re;
-  if(s==='unasked') return 'AI connection: <span class="qwrap"><span class="qmark" onclick="toggleQ(this,event)">?</span><span class="qpop">Awaiting first session — the AI will ask to approve Plexus the first time you open this project. Choose "Use this MCP server".</span></span> · <span class="rearm rearm-off" title="Nothing to reset yet — the permission question has not been answered in this project.">re-arm ⟲</span>';
+  if(s==='unasked') return 'AI connection: <span class="qwrap"><span class="qmark" onclick="toggleQ(this,event)">?</span><span class="qpop">Awaiting first session — the AI will ask to approve Plexus the first time you open this project. Choose "Use this MCP server".</span></span> · <span class="rearm rearm-off" data-tip="Nothing to reset yet — the permission question has not been answered in this project.">re-arm ⟲</span>';
   return '';
 }
 function rearmMcp(el){
@@ -770,7 +780,7 @@ async function connectProject(){
   if(r.error){status.textContent='✗ '+r.error;return;}
   status.textContent='';
   const rep = r.report || {};
-  const bar = (rep.regions||[]).map(x=>'<div style="flex:'+Math.max(1,Math.round(x.share*100))+';background:'+(REGION_HEX[x.region]||'#333')+(x.node_count===0?'22':'')+'" title="'+x.region+': '+x.node_count+'"></div>').join('');
+  const bar = (rep.regions||[]).map(x=>'<div style="flex:'+Math.max(1,Math.round(x.share*100))+';background:'+(REGION_HEX[x.region]||'#333')+(x.node_count===0?'22':'')+'" data-tip="'+x.region+': '+x.node_count+'"></div>').join('');
   document.getElementById('cx-result').innerHTML = \`
     <div class="result">
       <h4>⬡ Brain built — utilization \${rep.utilization_score??'—'} · map \${(rep.maturity||'').toUpperCase()} · \${r.mined_proposals} mined proposal\${r.mined_proposals===1?'':'s'} from git history</h4>
@@ -885,7 +895,7 @@ function renderTools(force){
     aEl.innerHTML=ais.length?ais.map(function(c){
       var st=!c.installed?'not on PATH':(c.mcp&&c.project_wired?('Plexus-ready ✓'+(c.global_connection?' · GLOBAL':'')):(c.mcp?'no per-project connection':'not MCP-capable'));
       var right=c.custom?'<button class="ghost" data-bin="'+esc(c.id.slice(7))+'" onclick="removeCustomAi(this)">✕</button>'
-        :(c.global_connection?'<button class="danger" onclick="disengageCodex(this)" title="Removes Plexus\\'s own entry from Codex\\'s settings (via Codex\\'s CLI). Reconnecting later is the same one-time paste.">Disengage</button>'
+        :(c.global_connection?'<button class="danger" onclick="disengageCodex(this)" data-tip="Removes Plexus own entry from Codex settings (via Codex CLI). Reconnecting later is the same one-time paste.">Disengage</button>'
         :'<span class="ok">'+(c.mcp&&c.project_wired?'✓':'·')+'</span>');
       var extra=(c.connect_command?'<div class="cmd" onclick="copyText(this.textContent,this)">'+esc(c.connect_command)+'</div>':'');
       return '<div class="clientrow"><div class="ci"><b>'+esc(c.label)+'</b><span class="c-state">'+st+'</span>'+(c.hint?'<div class="c-hint">'+esc(c.hint)+'</div>':'')+extra+'</div>'+right+'</div>';
@@ -943,7 +953,7 @@ function renderResume(force){
   var eEl=document.getElementById('rm-editors'), aEl=document.getElementById('rm-ais');
   eEl.innerHTML='<div class="hint">detecting…</div>'; aEl.innerHTML='';
   // Open stays disabled until detection has real results to act on.
-  var ob=document.getElementById('rm-open'); if(ob){ ob.disabled=true; ob.title='detecting editors & AIs…'; }
+  var ob=document.getElementById('rm-open'); if(ob){ ob.disabled=true; ob.setAttribute('data-tip','detecting editors & AIs…'); }
   fetch('/api/launcher/clients'+(force?'?force=1':'')).then(function(x){return x.json();}).then(function(r){
     var cs=r.clients||[]; INSTALLED=cs.filter(function(c){return c.installed;});
     var editors=cs.filter(function(c){return c.kind==='editor'&&c.installed;});
@@ -977,7 +987,7 @@ function renderResume(force){
             +'<div style="margin-top:8px;color:var(--lo)">Undo anytime with Disengage in <span class="golink" onclick="closeResume();openTools()">Manage connections</span> · <span class="golink" onclick="openCodexLearn()">Learn more</span> about what this entails.</div></div>';
         }
       }
-      else{ rows+='<button class="dis" disabled title="Only MCP-capable, Plexus-connected AIs can use the brain — see AI Guidelines (☰).">'+esc(c.label)+'<span class="rm-sub">'+(c.mcp?'no per-project connection':'not MCP-capable')+'</span></button>'; }
+      else{ rows+='<button class="dis" disabled data-tip="Only MCP-capable, Plexus-connected AIs can use the brain — see AI Guidelines (☰).">'+esc(c.label)+'<span class="rm-sub">'+(c.mcp?'no per-project connection':'not MCP-capable')+'</span></button>'; }
     });
     if(RM.ai!=='none' && !(RM.ai==='codex'&&codexSetup) && !ais.some(function(c){return c.id===RM.ai&&c.mcp&&c.project_wired;})){
       var first=ais.filter(function(c){return c.mcp&&c.project_wired;})[0];
@@ -985,7 +995,7 @@ function renderResume(force){
     }
     rows+='<button class="'+(RM.ai==='none'?'sel':'')+'" onclick="pickAi(\\'none\\')">None — just open the editor<span class="rm-sub">use its built-in agent if it has one</span></button>';
     aEl.innerHTML=rows;
-    if(ob){ ob.disabled=false; ob.title=''; }
+    if(ob){ ob.disabled=false; ob.removeAttribute('data-tip'); }
   }).catch(function(){ eEl.innerHTML='<div class="hint">detection failed — try ⌕ search again.</div>'; });
 }
 function pickEditor(id){ RM.editor=id; renderResume(false); }

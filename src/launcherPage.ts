@@ -532,7 +532,7 @@ async function loadProjects(){
       if(ago!==null && ago<360){
         const ms = document.getElementById('mcp-'+p.api_port);
         if(ms && !REARMED[ms.getAttribute('data-path')] && ms.textContent.indexOf('connected ✓')===-1){
-          ms.innerHTML = 'AI connection: <b class="ok-j">active ✓</b> <span class="ghosty">· used '+(ago<1?'just now':(ago<60? ago+'m ago' : Math.round(ago/60)+'h ago'))+'</span>';
+          ms.innerHTML = 'AI connection: <b class="ok-j">active ✓</b> <span class="ghosty">· used '+(ago<1?'just now':(ago<60? ago+'m ago' : Math.round(ago/60)+'h ago'))+'</span> · '+rearmLink(ms.getAttribute('data-path'));
         }
       }
     }).catch(()=>{});
@@ -587,16 +587,19 @@ function copyText(t, btn){navigator.clipboard.writeText(t);if(btn){const o=btn.t
 // project's permission question; re-arm resets it from ANY state (approving
 // nothing) so the question returns on the next session.
 var REARMED={}; // paths re-armed this page-visit: keep the instruction visible across card re-renders
+function rearmLink(path){
+  return '<span class="rearm" data-p="'+esc(path)+'" onclick="rearmMcp(this)" title="Resets the recorded choice for this project — approves nothing by itself; the next AI session here shows the permission question again.">re-arm ⟲</span>';
+}
 function mcpStatusHtml(p){
   if(REARMED[p.path]) return 'AI connection: <span class="rearmnote">re-armed ✓ — close the open terminal(s) for this project; the permission question returns on the next session</span>';
+  var re=rearmLink(p.path);
   // ground truth first: a live plexus process anchored in this project right now
-  if(p.live_session) return 'AI connection: <b class="ok-j">connected ✓</b> <span class="ghosty">· session open now</span>';
+  if(p.live_session) return 'AI connection: <b class="ok-j">connected ✓</b> <span class="ghosty">· session open now</span> · '+re;
   var s=p.mcp_status;
-  var re='<span class="rearm" data-p="'+esc(p.path)+'" onclick="rearmMcp(this)" title="Resets the recorded choice for this project — approves nothing by itself; the next AI session here shows the permission question again.">re-arm ⟲</span>';
   if(s==='approved') return 'AI connection: <b class="ok-j">approved ✓</b> · '+re;
   if(s==='approved_all') return 'AI connection: <b class="warn-a">approved — ALL future servers ⚠</b> · '+re+' <span class="ghosty">(re-arm to pick the narrower option)</span>';
   if(s==='declined') return 'AI connection: <b class="warn-a">declined ⚠</b> — sessions here run without Plexus · '+re;
-  if(s==='unasked') return 'AI connection: <span class="qwrap"><span class="qmark" onclick="toggleQ(this,event)">?</span><span class="qpop">Awaiting first session — the AI will ask to approve Plexus the first time you open this project. Choose "Use this MCP server".</span></span>';
+  if(s==='unasked') return 'AI connection: <span class="qwrap"><span class="qmark" onclick="toggleQ(this,event)">?</span><span class="qpop">Awaiting first session — the AI will ask to approve Plexus the first time you open this project. Choose "Use this MCP server".</span></span> · '+re;
   return '';
 }
 function rearmMcp(el){

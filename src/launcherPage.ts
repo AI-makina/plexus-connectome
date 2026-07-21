@@ -310,7 +310,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
       <div class="wiz-h">Plexus connects per project</div>
       <div class="wiz-p">Nothing to install — and no AI is ever permanently connected. Every project you create or connect here carries its own Plexus connection inside its folder: open your AI there and it finds the brain automatically, asking your permission once per project. Anywhere else, your AI stays exactly as it is — plexus-free.</div>
       <div style="text-align:left">
-        <div style="text-align:center;margin:6px 0 4px"><button class="primary" id="wiz-search" onclick="wizSearch(this)">⌕ See which AI apps this Mac has</button></div>
+        <div style="text-align:center;margin:6px 0 4px"><button class="primary" id="wiz-search" onclick="wizSearch(this)">⌕ See which AI apps your computer has</button></div>
         <div id="wiz-clients"></div>
       </div>
       <div id="wiz-connect-result"></div>
@@ -388,7 +388,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
 <div class="modal" id="tools-modal" onclick="if(event.target===this)closeTools()">
   <div class="modal-card guide" style="max-width:560px">
     <h3>Manage connections</h3>
-    <div class="g-sub">Plexus never installs itself into an AI or an editor — each Plexus project connects on its own. This is where you see what's on this Mac and add new AI CLIs.</div>
+    <div class="g-sub">Plexus never installs itself into an AI or an editor — each Plexus project connects on its own. This is where you see what's on your computer and add new AI CLIs.</div>
     <div class="opt-label">Code editors</div>
     <div id="tools-editors"></div>
     <div class="opt-label">AIs</div>
@@ -407,9 +407,9 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <h3>Connecting Codex globally — what it entails</h3>
     <div class="g-sub">The full picture, before you run the command. Codex is the one exception in a per-project world, because OpenAI's design offers no per-project option.</div>
     <div class="g-rule"><b>What happens:</b> the command writes one line in Codex's own settings — "launch the Plexus helper with every Codex session." From then on, Codex sessions inside a Plexus project automatically use that project's brain; Codex sessions anywhere else carry the helper <b>dormant and silent</b> — it does nothing there.</div>
-    <div class="g-item"><span class="n">✓</span><span><b>What does NOT happen.</b> No project or code goes "inside" Codex — brains stay in their folders, and which brain engages is decided per session by the folder it starts in. Nothing is sent to the internet: Plexus runs entirely on this Mac. No other AI is touched.</span></div>
+    <div class="g-item"><span class="n">✓</span><span><b>What does NOT happen.</b> No project or code goes "inside" Codex — brains stay in their folders, and which brain engages is decided per session by the folder it starts in. Nothing is sent to the internet: Plexus runs entirely on your computer. No other AI is touched.</span></div>
     <div class="g-item"><span class="n">!</span><span><b>The honest costs.</b> (1) A Plexus helper process starts with <b>every</b> Codex session, including work unrelated to Plexus — idle there, but present. (2) Any Plexus project you open with Codex will engage its brain automatically — including times you only meant to peek (the ⬡ badge always tells you, and the intent firewall guards writes). (3) It's machine-wide for Codex — there's no narrower version; that's the trade you're accepting. (4) If you later uninstall or move Plexus without disengaging, Codex will try to launch a missing helper — harmless, but untidy until you disengage.</span></div>
-    <div class="g-item"><span class="n">↩</span><span><b>The undo is complete.</b> The <span class="golink" onclick="closeCodexLearn();closeResume();openTools()">Disengage button</span> (or <span class="mono">codex mcp remove plexus</span>) deletes that one line and restores Codex exactly as it was. Nothing residual, no trace.</span></div>
+    <div class="g-item"><span class="n">↩</span><span><b>The undo is complete.</b> The <span class="golink" onclick="closeCodexLearn();closeResume();openTools()">Disengage button</span> (or <span class="mono">codex mcp remove plexus</span>) deletes that one line and restores Codex exactly as it was. Nothing residual, no trace. And it's never final — you can bring Plexus and Codex back together anytime, with the same one-time paste.</span></div>
     <div style="margin-top:14px;text-align:right"><button class="ghost" onclick="closeCodexLearn()">close</button></div>
   </div>
 </div>
@@ -795,14 +795,14 @@ function wizSearch(btn){
   btn.disabled=true; btn.textContent='searching…';
   renderClients(document.getElementById('wiz-clients')).then(function(){
     btn.parentElement.style.display='none';
-  }).catch(function(){ btn.disabled=false; btn.textContent='⌕ See which AI apps this Mac has'; });
+  }).catch(function(){ btn.disabled=false; btn.textContent='⌕ See which AI apps your computer has'; });
 }
 function startPresentation(){ wizStep(1); }
 // advance only if the presentation is actually on screen (guards stray ended events)
 function vidEnded(){ var s=document.querySelector('.wstep[data-step="1"]'); if(s && s.classList.contains('active')) wizStep(2); }
 // ── AI-tool detection — INFORMATIONAL only (Integration v2): Plexus never
 // registers itself into an AI globally. Each project carries its own
-// connection; this roster just shows which AI apps live on this Mac.
+// connection; this roster just shows which AI apps live on this computer.
 var INSTALLED=[]; // last detection result (installed clients) — shared by results screens
 function renderClients(listEl){
   listEl.innerHTML = '<div class="hint">detecting your AI tools…</div>';
@@ -811,7 +811,7 @@ function renderClients(listEl){
     var inst = (r.clients || []).filter(function(c){ return c.installed; });
     INSTALLED = inst;
     if(!inst.length){
-      listEl.innerHTML = '<div class="hint">No AI tools detected on this machine yet. Install one (Claude Code, Cursor, Antigravity…) — your Plexus projects connect to it automatically, per project.</div>';
+      listEl.innerHTML = '<div class="hint">No AI tools detected on your computer yet. Install one (Claude Code, Cursor, Antigravity…) — your Plexus projects connect to it automatically, per project.</div>';
       return inst;
     }
     listEl.innerHTML = inst.map(function(c){
@@ -842,8 +842,8 @@ function loadConnections(){
     INSTALLED = inst;
     head.textContent = '⬡ Plexus connects per project';
     sub.textContent = inst.length
-      ? 'Nothing to install — each project carries its own connection, and AIs opened anywhere else stay plexus-free. Detected on this Mac: ' + inst.map(function(c){return c.label;}).join(', ') + '.'
-      : 'Nothing to install — each project carries its own connection. No AI tools detected on this Mac yet.';
+      ? 'Nothing to install — each project carries its own connection, and AIs opened anywhere else stay plexus-free. Detected on your computer: ' + inst.map(function(c){return c.label;}).join(', ') + '.'
+      : 'Nothing to install — each project carries its own connection. No AI tools detected on your computer yet.';
   }).catch(function(){ head.textContent='⬡ Plexus connects per project'; });
 }
 function openTools(){

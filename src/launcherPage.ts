@@ -266,6 +266,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .mcpstat .ghosty{color:var(--ghost)}
   .rearm{color:var(--azure);cursor:pointer}
   .rearm:hover{color:var(--violet)}
+  .rearm.rearm-off{opacity:.35;cursor:default;pointer-events:none}
   .rearmnote{color:var(--gold);font-weight:600;text-shadow:0 0 9px rgba(245,192,68,.65), 0 0 20px rgba(245,192,68,.3);animation:pulse 2.2s ease-in-out infinite}
   .qmark{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid var(--line2);color:var(--lo);font:600 9px var(--mono);cursor:pointer;vertical-align:middle;transition:background .15s,color .15s,border-color .15s}
   .qmark:hover{color:var(--ice);border-color:rgba(167,139,250,.55)}
@@ -638,7 +639,7 @@ function mcpStatusHtml(p){
   if(s==='approved') return 'AI connection: <b class="ok-j">approved ✓ · Plexus MCP only</b> · '+re;
   if(s==='approved_all') return 'AI connection: <b class="ok-j">approved ✓ · Plexus + ALL future MCPs</b> · '+re+' <span class="ghosty">(re-arm to pick the narrower option)</span>';
   if(s==='declined') return 'AI connection: <b class="warn-a">declined ⚠</b> — sessions here run without Plexus · '+re;
-  if(s==='unasked') return 'AI connection: <span class="qwrap"><span class="qmark" onclick="toggleQ(this,event)">?</span><span class="qpop">Awaiting first session — the AI will ask to approve Plexus the first time you open this project. Choose "Use this MCP server".</span></span> · '+re;
+  if(s==='unasked') return 'AI connection: <span class="qwrap"><span class="qmark" onclick="toggleQ(this,event)">?</span><span class="qpop">Awaiting first session — the AI will ask to approve Plexus the first time you open this project. Choose "Use this MCP server".</span></span> · <span class="rearm rearm-off" title="Nothing to reset yet — the permission question has not been answered in this project.">re-arm ⟲</span>';
   return '';
 }
 function rearmMcp(el){
@@ -941,6 +942,8 @@ function resumeWith(pathStr){
 function renderResume(force){
   var eEl=document.getElementById('rm-editors'), aEl=document.getElementById('rm-ais');
   eEl.innerHTML='<div class="hint">detecting…</div>'; aEl.innerHTML='';
+  // Open stays disabled until detection has real results to act on.
+  var ob=document.getElementById('rm-open'); if(ob){ ob.disabled=true; ob.title='detecting editors & AIs…'; }
   fetch('/api/launcher/clients'+(force?'?force=1':'')).then(function(x){return x.json();}).then(function(r){
     var cs=r.clients||[]; INSTALLED=cs.filter(function(c){return c.installed;});
     var editors=cs.filter(function(c){return c.kind==='editor'&&c.installed;});
@@ -982,6 +985,7 @@ function renderResume(force){
     }
     rows+='<button class="'+(RM.ai==='none'?'sel':'')+'" onclick="pickAi(\\'none\\')">None — just open the editor<span class="rm-sub">use its built-in agent if it has one</span></button>';
     aEl.innerHTML=rows;
+    if(ob){ ob.disabled=false; ob.title=''; }
   }).catch(function(){ eEl.innerHTML='<div class="hint">detection failed — try ⌕ search again.</div>'; });
 }
 function pickEditor(id){ RM.editor=id; renderResume(false); }

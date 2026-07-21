@@ -579,7 +579,7 @@ function copyText(t, btn){navigator.clipboard.writeText(t);if(btn){const o=btn.t
 // nothing) so the question returns on the next session.
 var REARMED={}; // paths re-armed this page-visit: keep the instruction visible across card re-renders
 function mcpStatusHtml(p){
-  if(REARMED[p.path]) return 'AI connection: <span class="rearmnote">re-armed ✓ — close the open AI terminals for this project; the permission question returns on the next session</span>';
+  if(REARMED[p.path]) return 'AI connection: <span class="rearmnote">re-armed ✓ — close the open terminal(s) for this project; the permission question returns on the next session</span>';
   var s=p.mcp_status;
   var re='<span class="rearm" data-p="'+esc(p.path)+'" onclick="rearmMcp(this)" title="Resets the recorded choice for this project — approves nothing by itself; the next AI session here shows the permission question again.">re-arm ⟲</span>';
   if(s==='approved') return 'AI connection: <b class="ok-j">approved ✓</b> · '+re;

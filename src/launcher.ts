@@ -857,16 +857,6 @@ export function startLauncher(open = true) {
     // own CLI, on the user's click. Allowed by the asymmetry rule: adding reach
     // requires the user's hands; shrinking reach only requires their click
     // (same footing as re-arm). Re-connecting later = the same paste ceremony.
-    // Open a PLAIN terminal window — no AI, no cd, nothing loaded. Exists for
-    // one-time paste ceremonies (the Codex connect command) so a dashboard-first
-    // user is never stranded hunting for "any terminal".
-    app.post('/api/launcher/open-terminal', (_req, res) => {
-        if (process.platform !== 'darwin') return res.json({ ok: false, error: 'automatic terminal opening is macOS-only for now — open your terminal app manually' });
-        const scpt = ['tell application "Terminal"', '\tactivate', '\tdo script ""', 'end tell'].join('\n');
-        execFile('osascript', ['-e', scpt], { encoding: 'utf8', timeout: 15000 }, () => { /* fire-and-forget */ });
-        res.json({ ok: true });
-    });
-
     app.post('/api/launcher/disengage-codex', (_req, res) => {
         try {
             execFileSync('codex', ['mcp', 'remove', 'plexus'], { encoding: 'utf8', timeout: 20000 });

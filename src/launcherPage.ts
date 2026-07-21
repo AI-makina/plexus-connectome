@@ -249,8 +249,6 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .rm-clients button.sel{border-color:rgba(167,139,250,.65);box-shadow:0 0 16px rgba(139,92,246,.22)}
   .rm-clients button.dis{opacity:.45;cursor:default}
   .rm-clients button.dis:hover{border-color:var(--line2);box-shadow:none}
-  /* info-open ≠ selected: gold ring means "reading about it", violet means "will launch" */
-  .rm-clients button.infoON{border-color:rgba(245,192,68,.6);box-shadow:0 0 14px rgba(245,192,68,.18)}
   .rm-sub{float:right;font:10px var(--mono);color:var(--lo);margin-left:10px}
   .rm-sub .warn-a{color:var(--gold);font-weight:600}
   .codexhow{background:var(--ink1);border:1px solid var(--line1);border-radius:12px;padding:11px 13px;font-size:12px;color:var(--mid);line-height:1.55;
@@ -925,10 +923,9 @@ function wizFinish(view){
 // ── Open project (per project: editor + AI picker) ──
 // ── Open project: two-step picker (editor → AI), remembered per project ──
 var PROJECTS=[];
-var RM={path:null, editor:null, ai:null, codexOpen:false};
+var RM={path:null, editor:null, ai:null};
 function resumeWith(pathStr){
   RM.path = pathStr;
-  RM.codexOpen = false;
   var proj=null; for(var i=0;i<PROJECTS.length;i++){ if(PROJECTS[i].path===pathStr) proj=PROJECTS[i]; }
   RM.editor = (proj && proj.preferred_editor) || null;
   RM.ai = (proj && proj.preferred_ai) || null;
@@ -954,61 +951,54 @@ function renderResume(force){
         return '<button class="'+(RM.editor===c.id?'sel':'')+'" onclick="pickEditor(\\''+c.id+'\\')">'+esc(c.label)+(c.builtin_agent?'<span class="rm-sub">has a built-in agent</span>':'')+'</button>';
       }).join('');
     }
-    // The Codex info panel and the selection are mutually exclusive states: while
-    // the panel is open, no AI shows selected and Open is disabled — the picker
-    // must never quietly launch Claude while the user is reading about Codex.
-    if(!ais.some(function(c){return c.connect_command;})) RM.codexOpen=false;
+    // Codex-unconnected is SELECTABLE as a setup flow: pick it, click Open, and
+    // the paired EDITOR opens at the project — the paste happens in the editor's
+    // own terminal (no Terminal.app, ever). Setup steps render under the row.
+    var codexSetup = ais.some(function(c){ return c.connect_command; });
+    if(!codexSetup && RM.ai==='codex' ) RM.ai=null;
     var rows='';
     ais.forEach(function(c){
       var ready=c.mcp&&c.project_wired;
-      if(ready){ rows+='<button class="'+(!RM.codexOpen&&RM.ai===c.id?'sel':'')+'" onclick="pickAi(\\''+c.id+'\\')">'+esc(c.label)+'<span class="rm-sub">Plexus-ready ✓'+(c.global_connection?' <b class="warn-a">· global</b>':'')+'</span></button>'; }
+      if(ready){ rows+='<button class="'+(RM.ai===c.id?'sel':'')+'" onclick="pickAi(\\''+c.id+'\\')">'+esc(c.label)+'<span class="rm-sub">Plexus-ready ✓'+(c.global_connection?' <b class="warn-a">· global</b>':'')+'</span></button>'; }
       else if(c.connect_command){
-        rows+='<button class="'+(RM.codexOpen?'infoON':'')+'" onclick="toggleCodexInfo()">'+esc(c.label)+'<span class="rm-sub">global-only — tap to see how to connect</span></button>';
-        if(RM.codexOpen){
-          rows+='<div class="codexhow">Codex only supports a global connection (OpenAI\\'s design), and Plexus never connects an AI globally — <b>you</b> run it, once per computer:'
+        rows+='<button class="'+(RM.ai==='codex'?'sel':'')+'" onclick="pickAi(\\'codex\\')">'+esc(c.label)+'<span class="rm-sub">global-only — one-time setup on first open</span></button>';
+        if(RM.ai==='codex'){
+          rows+='<div class="codexhow">Codex only supports a global connection (OpenAI\\'s design), and Plexus never connects an AI globally — <b>you</b> run it, once per computer, right inside your editor:'
             +'<div style="margin:7px 0 2px"><b>1.</b> Copy the command:</div>'
             +'<div class="cmd" onclick="copyText(this.textContent,this)">'+esc(c.connect_command)+'</div>'
-            +'<div style="margin:7px 0"><b>2.</b> Paste it in any terminal and press enter — <span class="golink" onclick="openTermForPaste(this)">open a terminal for me ↗</span></div>'
-            +'<div><b>3.</b> Come back and hit <b>⌕ search again</b> below — Codex becomes selectable.</div>'
+            +'<div style="margin:7px 0"><b>2.</b> Click <b>Open</b> — your editor opens at this project.</div>'
+            +'<div><b>3.</b> Paste the command in the editor\\'s terminal, press enter, then type <span class="mono">codex</span> in that same terminal — it starts already connected. From your next Open on, Codex starts automatically.</div>'
             +'<div style="margin-top:8px;color:var(--lo)">Undo anytime with Disengage in <span class="golink" onclick="closeResume();openTools()">Manage connections</span> · <span class="golink" onclick="openCodexLearn()">Learn more</span> about what this entails.</div></div>';
         }
       }
       else{ rows+='<button class="dis" disabled title="Only MCP-capable, Plexus-connected AIs can use the brain — see AI Guidelines (☰).">'+esc(c.label)+'<span class="rm-sub">'+(c.mcp?'no per-project connection':'not MCP-capable')+'</span></button>'; }
     });
-    if(RM.ai!=='none' && !ais.some(function(c){return c.id===RM.ai&&c.mcp&&c.project_wired;})){
+    if(RM.ai!=='none' && !(RM.ai==='codex'&&codexSetup) && !ais.some(function(c){return c.id===RM.ai&&c.mcp&&c.project_wired;})){
       var first=ais.filter(function(c){return c.mcp&&c.project_wired;})[0];
       RM.ai=first?first.id:'none';
     }
-    rows+='<button class="'+(!RM.codexOpen&&RM.ai==='none'?'sel':'')+'" onclick="pickAi(\\'none\\')">None — just open the editor<span class="rm-sub">use its built-in agent if it has one</span></button>';
+    rows+='<button class="'+(RM.ai==='none'?'sel':'')+'" onclick="pickAi(\\'none\\')">None — just open the editor<span class="rm-sub">use its built-in agent if it has one</span></button>';
     aEl.innerHTML=rows;
-    var openBtn=document.getElementById('rm-open');
-    if(openBtn){
-      openBtn.disabled=!!RM.codexOpen;
-      openBtn.title=RM.codexOpen?'Codex is not connected yet — run the command, then ⌕ search again; or pick a Plexus-ready AI.':'';
-    }
-    if(RM.codexOpen) document.getElementById('rm-note').textContent='Codex is not connected yet — Open is paused. Run the command above and ⌕ search again, or tap Codex to close this and pick a Plexus-ready AI.';
   }).catch(function(){ eEl.innerHTML='<div class="hint">detection failed — try ⌕ search again.</div>'; });
 }
 function pickEditor(id){ RM.editor=id; renderResume(false); }
-function pickAi(id){ RM.ai=id; RM.codexOpen=false; renderResume(false); }
-function toggleCodexInfo(){ RM.codexOpen=!RM.codexOpen; renderResume(false); }
-function openTermForPaste(el){
-  var o=el.textContent; el.textContent='opening…';
-  fetch('/api/launcher/open-terminal',{method:'POST'}).then(function(x){return x.json();}).then(function(r){
-    el.textContent = r.ok ? 'terminal opened — paste there ✓' : (r.error||o);
-    setTimeout(function(){ el.textContent=o; }, 4000);
-  }).catch(function(){ el.textContent=o; });
-}
+function pickAi(id){ RM.ai=id; renderResume(false); }
 function rescanResume(el){ el.textContent='searching…'; renderResume(true); setTimeout(function(){ el.textContent='⌕ search again'; }, 1400); }
 function doOpenProject(btn){
-  if(RM.codexOpen){ document.getElementById('rm-note').textContent='Codex is not connected yet — run the command above and ⌕ search again, or tap Codex to close its panel and pick a Plexus-ready AI.'; return; }
   if(!RM.editor){ document.getElementById('rm-note').textContent='Pick a code editor first (install one if none are detected), or use the connect code below.'; return; }
+  // Codex setup mode: open the editor PLAIN (no auto-start) — the user pastes
+  // the connect command in the editor's own terminal, then types codex there.
+  var codexSetup = (RM.ai==='codex');
   btn.disabled=true; var orig=btn.textContent; btn.textContent='opening…';
-  fetch('/api/launcher/open-editor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:RM.path,client:RM.editor,ai:RM.ai||'none'})})
+  fetch('/api/launcher/open-editor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:RM.path,client:RM.editor,ai:codexSetup?'none':(RM.ai||'none')})})
     .then(function(x){return x.json();}).then(function(r){
       btn.disabled=false; btn.textContent = r.ok ? 'opened ✓' : orig;
       if(r.command) document.getElementById('rm-cmd').textContent=r.command;
-      var msg = r.error || r.note; if(msg) document.getElementById('rm-note').textContent=msg;
+      if(codexSetup && r.ok){
+        document.getElementById('rm-note').textContent='Editor opened at the project. Now: paste the copied command in its terminal, press enter, then type codex in that same terminal — it starts already connected. From your next Open on, Codex starts automatically.';
+      } else {
+        var msg = r.error || r.note; if(msg) document.getElementById('rm-note').textContent=msg;
+      }
       loadProjects();
     }).catch(function(){ btn.disabled=false; btn.textContent=orig; });
 }

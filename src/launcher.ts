@@ -274,20 +274,20 @@ export function startLauncher(open = true) {
     // Read-only mirror of ~/.claude.json (Claude's own bookkeeping, never edited
     // by us): approved | approved_all (option 2 — blanket) | declined | unasked.
     function readMcpStatus(projectPath: string): string {
+        // TRUE STORE (verified live, CC 2.1.215): project-server choices are written
+        // to <project>/.claude/settings.local.json (decline → disabledMcpjsonServers
+        // there; reset-project-choices clears it there). The ~/.claude.json record is
+        // legacy scaffolding — kept only as a fallback for older clients. LIVE
+        // engagement is shown separately from running processes + engine activity.
         try {
-            const cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
-            const rec = cfg?.projects?.[path.resolve(projectPath)];
-            if (!rec) return 'unasked';
-            if ((rec.disabledMcpjsonServers || []).includes('plexus')) return 'declined';
-            if (rec.enableAllProjectMcpServers === true) return 'approved_all';
-            if ((rec.enabledMcpjsonServers || []).includes('plexus')) return 'approved';
-            // 2.1.215 reality (verified by record-diffing across reset + live prompts):
-            // empty arrays are default scaffolding on EVERY project and answers don't
-            // reliably write them — the record cannot distinguish "approved earlier"
-            // from "never asked". Only explicit evidence earns a verdict; everything
-            // else is 'unasked', and LIVE engagement is shown from the engine's own
-            // activity feed instead (frontend upgrades the card when the brain was
-            // consulted recently — a signal that cannot lie).
+            const read = (f: string) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')) || {}; } catch { return {}; } };
+            const local = read(path.join(projectPath, '.claude', 'settings.local.json'));
+            const home = (read(path.join(os.homedir(), '.claude.json')).projects || {})[path.resolve(projectPath)] || {};
+            for (const rec of [local, home]) {
+                if ((rec.disabledMcpjsonServers || []).includes('plexus')) return 'declined';
+                if (rec.enableAllProjectMcpServers === true) return 'approved_all';
+                if ((rec.enabledMcpjsonServers || []).includes('plexus')) return 'approved';
+            }
             return 'unasked';
         } catch { return 'unknown'; }
     }

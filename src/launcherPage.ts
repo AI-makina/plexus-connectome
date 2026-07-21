@@ -257,6 +257,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .mcpstat .ghosty{color:var(--ghost)}
   .rearm{color:var(--azure);cursor:pointer}
   .rearm:hover{color:var(--violet)}
+  .rearmnote{color:var(--gold);font-weight:600;text-shadow:0 0 9px rgba(245,192,68,.65), 0 0 20px rgba(245,192,68,.3);animation:pulse 2.2s ease-in-out infinite}
   .qmark{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;border:1px solid var(--line2);color:var(--lo);font:600 9px var(--mono);cursor:pointer;vertical-align:middle;transition:background .15s,color .15s,border-color .15s}
   .qmark:hover{color:var(--ice);border-color:rgba(167,139,250,.55)}
   /* click-to-open glass popover; the ? fills violet while open */
@@ -576,7 +577,9 @@ function copyText(t, btn){navigator.clipboard.writeText(t);if(btn){const o=btn.t
 // AI-connection status per card: mirrors what Claude Code recorded for this
 // project's permission question; re-arm resets it from ANY state (approving
 // nothing) so the question returns on the next session.
+var REARMED={}; // paths re-armed this page-visit: keep the instruction visible across card re-renders
 function mcpStatusHtml(p){
+  if(REARMED[p.path]) return 'AI connection: <span class="rearmnote">re-armed ✓ — close the open AI terminals for this project; the permission question returns on the next session</span>';
   var s=p.mcp_status;
   var re='<span class="rearm" data-p="'+esc(p.path)+'" onclick="rearmMcp(this)" title="Resets the recorded choice for this project — approves nothing by itself; the next AI session here shows the permission question again.">re-arm ⟲</span>';
   if(s==='approved') return 'AI connection: <b class="ok-j">approved ✓</b> · '+re;
@@ -586,10 +589,11 @@ function mcpStatusHtml(p){
   return '';
 }
 function rearmMcp(el){
+  var p=el.getAttribute('data-p');
   el.textContent='re-arming…';
-  fetch('/api/launcher/rearm-mcp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:el.getAttribute('data-p')})})
+  fetch('/api/launcher/rearm-mcp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:p})})
     .then(function(x){return x.json();}).then(function(r){
-      if(r.ok){ el.outerHTML='<span class="ok-j">✓ re-armed — the question returns on the next session</span>'; setTimeout(loadProjects, 2600); }
+      if(r.ok){ REARMED[p]=true; loadProjects(); }
       else { el.textContent='re-arm failed'+(r.error?': '+r.error:''); }
     }).catch(function(){ el.textContent='re-arm failed'; });
 }

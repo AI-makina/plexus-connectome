@@ -256,6 +256,9 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .codexhow b{color:var(--hi)}
   .golink{color:var(--azure);cursor:pointer;border-bottom:1px dotted rgba(111,168,255,.5)}
   .golink:hover{color:var(--violet);border-color:var(--violet)}
+  /* destructive action: red, unambiguous */
+  button.danger{background:transparent;color:var(--crimson);border-color:rgba(229,72,77,.45)}
+  button.danger:hover{color:var(--crimson);border-color:var(--crimson);box-shadow:0 0 14px rgba(229,72,77,.28)}
   /* Per-card AI-connection status (mirror of Claude Code's recorded choice) + re-arm */
   .mcpstat{font:10px var(--mono);color:var(--lo);margin-top:2px}
   .mcpstat .ok-j{color:var(--jade);font-weight:600}
@@ -881,7 +884,7 @@ function renderTools(force){
     aEl.innerHTML=ais.length?ais.map(function(c){
       var st=!c.installed?'not on PATH':(c.mcp&&c.project_wired?('Plexus-ready ✓'+(c.global_connection?' · GLOBAL':'')):(c.mcp?'no per-project connection':'not MCP-capable'));
       var right=c.custom?'<button class="ghost" data-bin="'+esc(c.id.slice(7))+'" onclick="removeCustomAi(this)">✕</button>'
-        :(c.global_connection?'<button class="ghost" onclick="disengageCodex(this)" title="Removes Plexus\\'s own entry from Codex\\'s settings (via Codex\\'s CLI). Reconnecting later is the same one-time paste.">Disengage</button>'
+        :(c.global_connection?'<button class="danger" onclick="disengageCodex(this)" title="Removes Plexus\\'s own entry from Codex\\'s settings (via Codex\\'s CLI). Reconnecting later is the same one-time paste.">Disengage</button>'
         :'<span class="ok">'+(c.mcp&&c.project_wired?'✓':'·')+'</span>');
       var extra=(c.connect_command?'<div class="cmd" onclick="copyText(this.textContent,this)">'+esc(c.connect_command)+'</div>':'');
       return '<div class="clientrow"><div class="ci"><b>'+esc(c.label)+'</b><span class="c-state">'+st+'</span>'+(c.hint?'<div class="c-hint">'+esc(c.hint)+'</div>':'')+extra+'</div>'+right+'</div>';

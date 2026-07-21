@@ -506,7 +506,7 @@ async function loadProjects(){
         <div class="path">\${esc(p.path)}</div>
         <div class="ports">api :\${p.api_port} · brain :\${p.ws_port}</div>
         <div class="ports" id="pulse-\${p.api_port}"></div>
-        <div class="mcpstat">\${mcpStatusHtml(p)}</div>
+        <div class="mcpstat" id="mcp-\${p.api_port}" data-path="\${esc(p.path)}">\${mcpStatusHtml(p)}</div>
       </div>
       <div class="pacts">
         <button onclick="resumeWith('\${esc(p.path)}')" title="open this Plexus project in a code editor with your chosen AI already engaged">Open project</button>
@@ -526,6 +526,15 @@ async function loadProjects(){
         a.consultations_24h + ' consultation'+(a.consultations_24h===1?'':'s')+' today' +
         (ago!==null ? ' · last '+(ago<1?'just now':ago+'m ago') : '') +
         ' · '+a.active_nodes+' nodes · '+a.amygdala_entries+' memor'+(a.amygdala_entries===1?'y':'ies');
+      // LIVE AI-connection signal: the brain was consulted recently ⇒ engaged —
+      // the engine's own activity feed, which cannot lie (Claude's approval
+      // record is ambiguous in 2.1.215, so it only ever earns explicit states).
+      if(ago!==null && ago<360){
+        const ms = document.getElementById('mcp-'+p.api_port);
+        if(ms && !REARMED[ms.getAttribute('data-path')]){
+          ms.innerHTML = 'AI connection: <b class="ok-j">active ✓</b> <span class="ghosty">· used '+(ago<1?'just now':(ago<60? ago+'m ago' : Math.round(ago/60)+'h ago'))+'</span>';
+        }
+      }
     }).catch(()=>{});
   }
 }

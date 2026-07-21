@@ -281,11 +281,13 @@ export function startLauncher(open = true) {
             if ((rec.disabledMcpjsonServers || []).includes('plexus')) return 'declined';
             if (rec.enableAllProjectMcpServers === true) return 'approved_all';
             if ((rec.enabledMcpjsonServers || []).includes('plexus')) return 'approved';
-            // Empirical (Claude Code 2.1.215, verified live on Tetris): accepting the
-            // folder-TRUST dialog authorizes the project's .mcp.json servers — the
-            // enabled/disabled arrays stay empty unless the per-server flow is used.
-            // Trust accepted + not explicitly disabled ⇒ plexus runs ⇒ approved.
-            if (rec.hasTrustDialogAccepted === true) return 'approved';
+            // 2.1.215 reality (verified by record-diffing across reset + live prompts):
+            // empty arrays are default scaffolding on EVERY project and answers don't
+            // reliably write them — the record cannot distinguish "approved earlier"
+            // from "never asked". Only explicit evidence earns a verdict; everything
+            // else is 'unasked', and LIVE engagement is shown from the engine's own
+            // activity feed instead (frontend upgrades the card when the brain was
+            // consulted recently — a signal that cannot lie).
             return 'unasked';
         } catch { return 'unknown'; }
     }

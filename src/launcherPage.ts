@@ -807,7 +807,7 @@ var INSTALLED=[]; // last detection result (installed clients) — shared by res
 function renderClients(listEl){
   listEl.innerHTML = '<div class="hint">detecting your AI tools…</div>';
   return fetch('/api/launcher/clients').then(function(x){return x.json();}).then(function(r){
-    // Only what's actually ON this machine — an uninstalled app is noise, not a choice.
+    // Only what's actually ON this computer — an uninstalled app is noise, not a choice.
     var inst = (r.clients || []).filter(function(c){ return c.installed; });
     INSTALLED = inst;
     if(!inst.length){

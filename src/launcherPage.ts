@@ -531,7 +531,7 @@ async function loadProjects(){
       // record is ambiguous in 2.1.215, so it only ever earns explicit states).
       if(ago!==null && ago<360){
         const ms = document.getElementById('mcp-'+p.api_port);
-        if(ms && !REARMED[ms.getAttribute('data-path')] && ms.textContent.indexOf('connected ✓')===-1){
+        if(ms && !REARMED[ms.getAttribute('data-path')] && ms.textContent.indexOf('?')!==-1){
           ms.innerHTML = 'AI connection: <b class="ok-j">active ✓</b> <span class="ghosty">· used '+(ago<1?'just now':(ago<60? ago+'m ago' : Math.round(ago/60)+'h ago'))+'</span> · '+rearmLink(ms.getAttribute('data-path'));
         }
       }

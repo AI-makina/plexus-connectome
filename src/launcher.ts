@@ -175,6 +175,18 @@ const AI_CLIENTS: AiClient[] = [
         hint: 'MCP-capable and Plexus-ready — connects per project (.gemini/settings.json); the ⬡ badge confirms on first use.' },
     { id: 'claude-desktop', label: 'Claude Desktop', kind: 'chat', bin: null, openBin: null, app: '/Applications/Claude.app', bundleId: 'com.anthropic.claudefordesktop', mcpConfig: CLAUDE_DESKTOP_CONFIG,
         hint: 'Chat app — no project folders, so it cannot do Plexus project work.' },
+    // ── Extended catalog: recognized on sight when installed; Plexus wiring is
+    // verification-gated per client (truthful labels — never claim untested). ──
+    { id: 'copilot', label: 'GitHub Copilot CLI', kind: 'ai', mcp: true, project_wired: false, bin: 'copilot', openBin: null, app: null,
+        hint: 'MCP-capable — Plexus wiring for this AI is pending verification.' },
+    { id: 'qwen', label: 'Qwen Code', kind: 'ai', mcp: true, project_wired: false, bin: 'qwen', openBin: null, app: null,
+        hint: 'MCP-capable (Gemini-CLI family) — Plexus wiring pending verification.' },
+    { id: 'opencode', label: 'OpenCode', kind: 'ai', mcp: true, project_wired: false, bin: 'opencode', openBin: null, app: null,
+        hint: 'MCP-capable — Plexus wiring for this AI is pending verification.' },
+    { id: 'goose', label: 'Goose', kind: 'ai', mcp: true, project_wired: false, bin: 'goose', openBin: null, app: null,
+        hint: 'MCP-native — Plexus wiring for this AI is pending verification.' },
+    { id: 'aider', label: 'Aider', kind: 'ai', mcp: false, project_wired: false, bin: 'aider', openBin: null, app: null,
+        hint: 'Not MCP-capable — it can run in a project folder but cannot use the Plexus brain.' },
 ];
 
 // Where the client's app actually lives: the conventional /Applications path, else a

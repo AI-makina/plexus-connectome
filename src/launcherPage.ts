@@ -249,6 +249,8 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .rm-clients button.sel{border-color:rgba(167,139,250,.65);box-shadow:0 0 16px rgba(139,92,246,.22)}
   .rm-clients button.dis{opacity:.45;cursor:default}
   .rm-clients button.dis:hover{border-color:var(--line2);box-shadow:none}
+  /* info-open ≠ selected: gold ring means "reading about it", violet means "will launch" */
+  .rm-clients button.infoON{border-color:rgba(245,192,68,.6);box-shadow:0 0 14px rgba(245,192,68,.18)}
   .rm-sub{float:right;font:10px var(--mono);color:var(--lo);margin-left:10px}
   .rm-sub .warn-a{color:var(--gold);font-weight:600}
   .codexhow{background:var(--ink1);border:1px solid var(--line1);border-radius:12px;padding:11px 13px;font-size:12px;color:var(--mid);line-height:1.55;
@@ -961,11 +963,14 @@ function renderResume(force){
       var ready=c.mcp&&c.project_wired;
       if(ready){ rows+='<button class="'+(!RM.codexOpen&&RM.ai===c.id?'sel':'')+'" onclick="pickAi(\\''+c.id+'\\')">'+esc(c.label)+'<span class="rm-sub">Plexus-ready ✓'+(c.global_connection?' <b class="warn-a">· global</b>':'')+'</span></button>'; }
       else if(c.connect_command){
-        rows+='<button class="'+(RM.codexOpen?'sel':'')+'" onclick="toggleCodexInfo()">'+esc(c.label)+'<span class="rm-sub">global-only — tap to see how to connect</span></button>';
+        rows+='<button class="'+(RM.codexOpen?'infoON':'')+'" onclick="toggleCodexInfo()">'+esc(c.label)+'<span class="rm-sub">global-only — tap to see how to connect</span></button>';
         if(RM.codexOpen){
-          rows+='<div class="codexhow">Codex only supports a global connection (OpenAI\\'s design), and Plexus never connects an AI globally — <b>you</b> do it: copy this, paste it in <b>any</b> terminal, press enter. One time per machine; undo anytime with the Disengage button in <span class="golink" onclick="closeResume();openTools()">Manage connections</span>. <span class="golink" onclick="openCodexLearn()">Learn more</span> about what this entails.'
+          rows+='<div class="codexhow">Codex only supports a global connection (OpenAI\\'s design), and Plexus never connects an AI globally — <b>you</b> run it, once per computer:'
+            +'<div style="margin:7px 0 2px"><b>1.</b> Copy the command:</div>'
             +'<div class="cmd" onclick="copyText(this.textContent,this)">'+esc(c.connect_command)+'</div>'
-            +'After running it, hit <b>⌕ search again</b> below — Codex will show Plexus-ready and become selectable.</div>';
+            +'<div style="margin:7px 0"><b>2.</b> Paste it in any terminal and press enter — <span class="golink" onclick="openTermForPaste(this)">open a terminal for me ↗</span></div>'
+            +'<div><b>3.</b> Come back and hit <b>⌕ search again</b> below — Codex becomes selectable.</div>'
+            +'<div style="margin-top:8px;color:var(--lo)">Undo anytime with Disengage in <span class="golink" onclick="closeResume();openTools()">Manage connections</span> · <span class="golink" onclick="openCodexLearn()">Learn more</span> about what this entails.</div></div>';
         }
       }
       else{ rows+='<button class="dis" disabled title="Only MCP-capable, Plexus-connected AIs can use the brain — see AI Guidelines (☰).">'+esc(c.label)+'<span class="rm-sub">'+(c.mcp?'no per-project connection':'not MCP-capable')+'</span></button>'; }
@@ -987,6 +992,13 @@ function renderResume(force){
 function pickEditor(id){ RM.editor=id; renderResume(false); }
 function pickAi(id){ RM.ai=id; RM.codexOpen=false; renderResume(false); }
 function toggleCodexInfo(){ RM.codexOpen=!RM.codexOpen; renderResume(false); }
+function openTermForPaste(el){
+  var o=el.textContent; el.textContent='opening…';
+  fetch('/api/launcher/open-terminal',{method:'POST'}).then(function(x){return x.json();}).then(function(r){
+    el.textContent = r.ok ? 'terminal opened — paste there ✓' : (r.error||o);
+    setTimeout(function(){ el.textContent=o; }, 4000);
+  }).catch(function(){ el.textContent=o; });
+}
 function rescanResume(el){ el.textContent='searching…'; renderResume(true); setTimeout(function(){ el.textContent='⌕ search again'; }, 1400); }
 function doOpenProject(btn){
   if(RM.codexOpen){ document.getElementById('rm-note').textContent='Codex is not connected yet — run the command above and ⌕ search again, or tap Codex to close its panel and pick a Plexus-ready AI.'; return; }

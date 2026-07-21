@@ -23,7 +23,7 @@ const LAUNCHER_PORT = parseInt(process.env.PLEXUS_LAUNCHER_PORT || '', 10) || 31
 const CLI = path.join(__dirname, 'cli.js');
 
 import { loadRegistry, saveRegistry, patchManifestPorts, backupRegistry } from './core/registry';
-import { writeProjectMcpJson, writeProjectTask, writeProjectEditorSettings, workCommand } from './core/clientConfig';
+import { writeProjectMcpJson, writeProjectPlugs, writeProjectTask, writeProjectEditorSettings, workCommand } from './core/clientConfig';
 
 function runCli(args: string[], cwd?: string): string {
     return execFileSync(process.execPath, [CLI, ...args], {
@@ -129,6 +129,13 @@ function mcpServerSpec(): { command: string; args: string[] } {
 // surface: Plexus connects per project via .mcp.json written at create/connect,
 // and no AI is ever permanently connected. The -p CLI flag remains for dev use.
 
+// Codex CLI reads MCP servers ONLY from its global ~/.codex/config.toml (no
+// per-project surface exists) — so "wired" for Codex means the user ran the
+// explicit one-time enable, verifiable in its own config file.
+function codexEnabled(): boolean {
+    return mcpConfigHasPlexus(CODEX_MCP_CONFIG) === true;
+}
+
 // Is a command on PATH? (detect installed AI clients / editors)
 function onPath(cmd: string): boolean {
     try { return !!execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { encoding: 'utf8' }).split('\n')[0].trim(); }
@@ -163,9 +170,9 @@ const AI_CLIENTS: AiClient[] = [
     { id: 'cursor', label: 'Cursor', kind: 'editor', builtin_agent: true, bin: 'cursor', openBin: 'cursor', app: '/Applications/Cursor.app', bundleId: 'com.todesktop.230313mzl4w4u92', mcpConfig: CURSOR_MCP_CONFIG,
         hint: 'Editor with a built-in agent. Any AI CLI also runs in its terminal.' },
     { id: 'codex', label: 'Codex CLI', kind: 'ai', mcp: true, project_wired: false, bin: 'codex', openBin: null, app: null, mcpConfig: CODEX_MCP_CONFIG,
-        hint: 'MCP-capable — automatic per-project Plexus connection for this AI is coming soon.' },
-    { id: 'gemini', label: 'Gemini CLI', kind: 'ai', mcp: true, project_wired: false, bin: 'gemini', openBin: null, app: null, mcpConfig: GEMINI_MCP_CONFIG,
-        hint: 'MCP-capable — automatic per-project Plexus connection for this AI is coming soon.' },
+        hint: 'MCP-capable. Codex only supports a global connection (its own design) — enable it once, explicitly; Plexus stays silent outside Plexus projects.' },
+    { id: 'gemini', label: 'Gemini CLI', kind: 'ai', mcp: true, project_wired: true, bin: 'gemini', openBin: null, app: null, mcpConfig: GEMINI_MCP_CONFIG,
+        hint: 'MCP-capable and Plexus-ready — connects per project (.gemini/settings.json); the ⬡ badge confirms on first use.' },
     { id: 'claude-desktop', label: 'Claude Desktop', kind: 'chat', bin: null, openBin: null, app: '/Applications/Claude.app', bundleId: 'com.anthropic.claudefordesktop', mcpConfig: CLAUDE_DESKTOP_CONFIG,
         hint: 'Chat app — no project folders, so it cannot do Plexus project work.' },
 ];
@@ -223,7 +230,14 @@ async function detectClients(force = false): Promise<any[]> {
         } else if (installed && c.mcpConfig) {
             connected = mcpConfigHasPlexus(c.mcpConfig); // Antigravity / Claude Desktop
         }
-        clients.push({ id: c.id, label: c.label, kind: c.kind, mcp: !!c.mcp, project_wired: !!c.project_wired, builtin_agent: !!c.builtin_agent, installed, can_open_folder: !!c.openBin, connected, hint: c.hint });
+        // Codex is global-only by ITS design: wired = the user explicitly enabled it
+        // (one-time, disclosed). Everyone else's wiring is per-project and static.
+        const effectiveWired = c.id === 'codex' ? codexEnabled() : !!c.project_wired;
+        clients.push({
+            id: c.id, label: c.label, kind: c.kind, mcp: !!c.mcp, project_wired: effectiveWired,
+            can_enable: c.id === 'codex' && installed && !effectiveWired,
+            builtin_agent: !!c.builtin_agent, installed, can_open_folder: !!c.openBin, connected, hint: c.hint,
+        });
     }
     // User-added AI CLIs (Manage connections → "Add an AI"): any command on PATH.
     // mcp flag = the user attests it reads the project's .mcp.json — only then is
@@ -621,7 +635,7 @@ export function startLauncher(open = true) {
 
             // Integration v2: the plug travels WITH the project. Fresh inits already
             // wrote it; connecting an ALREADY-brained project must write it too.
-            const plugResult = writeProjectMcpJson(projectPath);
+            const plugResult = writeProjectPlugs(projectPath).claude;
             if (plugResult.error) console.warn(`[Plexus Launcher] project plug: ${plugResult.error}`);
 
             runCli(['analyze', '-p', projectPath]);
@@ -736,7 +750,7 @@ export function startLauncher(open = true) {
         backupRegistry(); // ~/.plexus/projects.json.bak — undo by hand if a repair was wrong
         proj.path = target;
         saveRegistry(reg);
-        writeProjectMcpJson(target); // the plug follows the project
+        writeProjectPlugs(target); // the plugs follow the project
         res.json({ ok: true, name, path: target, note: 'registry backed up to projects.json.bak before the change' });
     });
 
@@ -815,6 +829,21 @@ export function startLauncher(open = true) {
         }
     });
 
+    // One-time, explicit Codex enable. Global is Codex's ONLY mechanism (no
+    // per-project surface exists in its design), so the user opts in knowingly —
+    // and conditional dormant instructions keep Plexus silent for Codex outside
+    // Plexus projects. Uses Codex's own registration command.
+    app.post('/api/launcher/enable-codex', (_req, res) => {
+        const spec = mcpServerSpec();
+        try {
+            execFileSync('codex', ['mcp', 'add', 'plexus', '--', spec.command, ...spec.args], { encoding: 'utf8', timeout: 20000 });
+            clientsCache = null;
+            res.json({ ok: true, note: 'Codex is now Plexus-enabled. It connects globally (its only mechanism) but stays silent outside Plexus projects.' });
+        } catch (err: any) {
+            res.status(500).json({ error: String(err?.stderr || err?.message || err).slice(0, 200) });
+        }
+    });
+
     app.post('/api/launcher/custom-ai/remove', (req, res) => {
         const bin = String(req.body?.bin || '').trim();
         const p = loadPrefs();
@@ -880,7 +909,8 @@ export function startLauncher(open = true) {
         if (!ai || ai === 'none' || ai === 'builtin') return null;
         const roster = AI_CLIENTS.find(c => c.id === ai && c.kind === 'ai');
         if (roster) {
-            if (!roster.mcp || !roster.project_wired) return { error: `${roster.label} cannot use the Plexus brain yet — pick a Plexus-ready AI or "none"` };
+            const wired = roster.id === 'codex' ? codexEnabled() : !!roster.project_wired;
+            if (!roster.mcp || !wired) return { error: `${roster.label} cannot use the Plexus brain yet — pick a Plexus-ready AI or "none"` };
             if (!roster.bin || !onPath(roster.bin)) return { error: `${roster.label} is not installed on PATH` };
             return { bin: roster.bin, label: roster.label };
         }

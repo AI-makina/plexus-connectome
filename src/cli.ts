@@ -84,12 +84,14 @@ program
         // Integration v2: the plug travels WITH the project — write the per-project
         // Claude Code registration (merge-aware, backed up). Covers every init path:
         // mcp init_project, launcher create/connect, manual `plexus init`.
-        const { writeProjectMcpJson } = require('./core/clientConfig');
-        const plug = writeProjectMcpJson(targetPath);
-        if (plug.error) console.warn(`⚠ project plug not written: ${plug.error}`);
-        else console.log(plug.wrote
-            ? `Project plug written: ${plug.file} — AI sessions opened in this folder (or any subfolder) load Plexus automatically`
-            : 'Project plug already present (.mcp.json)');
+        const { writeProjectPlugs } = require('./core/clientConfig');
+        const plugs = writeProjectPlugs(targetPath);
+        if (plugs.claude.error) console.warn(`⚠ Claude plug not written: ${plugs.claude.error}`);
+        else console.log(plugs.claude.wrote
+            ? `Project plug written: ${plugs.claude.file} — AI sessions opened in this folder (or any subfolder) load Plexus automatically`
+            : 'Claude plug already present (.mcp.json)');
+        if (plugs.gemini.error) console.warn(`⚠ Gemini plug not written: ${plugs.gemini.error}`);
+        else if (plugs.gemini.wrote) console.log(`Gemini plug written: ${plugs.gemini.file}`);
     });
 
 program
@@ -1013,7 +1015,7 @@ program
         const os = require('os');
         const { execFileSync } = require('child_process');
         const { loadRegistry } = require('./core/registry');
-        const { writeProjectMcpJson } = require('./core/clientConfig');
+        const { writeProjectPlugs } = require('./core/clientConfig');
         const claudeJson = path.join(os.homedir(), '.claude.json');
         const backup = claudeJson + '.bak-plexus-v2';
         const reg = loadRegistry();
@@ -1060,8 +1062,8 @@ program
         // 3. Per-project plugs for every registered project that still exists on disk.
         for (const p of reg.projects) {
             if (!fs.existsSync(p.path)) { console.warn(`⚠ ${p.name}: folder missing (${p.path}) — skipped; repair its path via the launcher`); continue; }
-            const r = writeProjectMcpJson(p.path);
-            console.log(r.error ? `⚠ ${p.name}: ${r.error}` : `✓ ${p.name}: ${r.wrote ? 'plug written' : 'plug already current'} (${r.file})`);
+            const r = writeProjectPlugs(p.path);
+            console.log(r.claude.error ? `⚠ ${p.name}: ${r.claude.error}` : `✓ ${p.name}: ${r.claude.wrote ? 'Claude plug written' : 'Claude plug current'}${r.gemini.error ? ` (gemini: ${r.gemini.error})` : r.gemini.wrote ? ' + Gemini plug written' : ' + Gemini plug current'}`);
         }
         console.log('\nDone. Claude Code asks ONE-TIME approval per project for its .mcp.json on first open — choose to use it.');
         console.log('Verify: `claude mcp list` inside a project shows plexus; in an unrelated folder it does not.');

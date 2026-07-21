@@ -98,6 +98,38 @@ export function writeProjectEditorSettings(projectPath: string): { wrote: boolea
     }
 }
 
+/** Write/refresh the Gemini CLI project plug (<project>/.gemini/settings.json).
+ *  Same rules as .mcp.json: structural merge, only the plexus entry, backup,
+ *  idempotent. Wired per Google's documented project-settings support — the
+ *  ⬡ badge on a Gemini user's first session is the live confirmation. */
+export function writeProjectGeminiSettings(projectPath: string): { wrote: boolean; file: string; error?: string } {
+    const dir = path.join(projectPath, '.gemini');
+    const file = path.join(dir, 'settings.json');
+    try {
+        let config: any = {};
+        if (fs.existsSync(file)) {
+            try { config = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; }
+            catch { return { wrote: false, file, error: '.gemini/settings.json exists but is not valid JSON — refusing to touch it' }; }
+        }
+        const spec = plexusServerSpec();
+        const desired = { command: spec.command, args: spec.args };
+        const current = config?.mcpServers?.plexus;
+        if (current && JSON.stringify(current) === JSON.stringify(desired)) return { wrote: false, file };
+        fs.mkdirSync(dir, { recursive: true });
+        backupFile(file);
+        config.mcpServers = { ...(config.mcpServers || {}), plexus: desired };
+        fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
+        return { wrote: true, file };
+    } catch (e: any) {
+        return { wrote: false, file, error: e.message };
+    }
+}
+
+/** All per-project plugs in one call — every client with a project surface. */
+export function writeProjectPlugs(projectPath: string): { claude: ReturnType<typeof writeProjectMcpJson>; gemini: ReturnType<typeof writeProjectGeminiSettings> } {
+    return { claude: writeProjectMcpJson(projectPath), gemini: writeProjectGeminiSettings(projectPath) };
+}
+
 /** Write/refresh the Claude Code project plug (<project>/.mcp.json). Merge-aware, backed up, idempotent. */
 export function writeProjectMcpJson(projectPath: string): { wrote: boolean; file: string; error?: string } {
     const file = path.join(projectPath, '.mcp.json');

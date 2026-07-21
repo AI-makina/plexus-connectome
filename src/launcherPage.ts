@@ -388,7 +388,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <div class="opt-label">AIs</div>
     <div id="tools-ais"></div>
     <div class="opt-label">Add an AI (any agent CLI on your PATH)</div>
-    <div class="row" style="margin:6px 0"><input type="text" id="addai-bin" placeholder="command, e.g. aider" style="max-width:160px"><input type="text" id="addai-label" placeholder="display name (optional)" style="max-width:180px"></div>
+    <div class="row" style="margin:6px 0"><input type="text" id="addai-bin" placeholder="command, e.g. claude" style="max-width:160px"><input type="text" id="addai-label" placeholder="display name (optional)" style="max-width:180px"></div>
     <label style="display:flex;align-items:center;gap:7px;margin:8px 0;text-transform:none;letter-spacing:0;font:12px var(--sans);color:var(--mid)"><input type="checkbox" id="addai-mcp"> MCP-capable — it reads the project's .mcp.json (required for Plexus work)</label>
     <div class="row"><button class="primary" onclick="addCustomAi(this)">Add</button><span class="hint" id="addai-note"></span></div>
     <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center"><span class="wiz-skip" onclick="rescanTools(this)">⌕ search again</span><button class="ghost" onclick="closeTools()">close</button></div>

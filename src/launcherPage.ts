@@ -901,7 +901,6 @@ function addCustomAi(btn){
       else note.textContent=r.error||'could not add';
     }).catch(function(){ btn.disabled=false; note.textContent='could not add'; });
 }
-function toggleCodexHow(btn){ var d=btn.nextElementSibling; if(d) d.style.display = d.style.display==='none' ? 'block' : 'none'; }
 function openCodexLearn(){ document.getElementById('codexlearn-modal').classList.add('show'); }
 function closeCodexLearn(){ document.getElementById('codexlearn-modal').classList.remove('show'); }
 function disengageCodex(btn){
@@ -924,9 +923,10 @@ function wizFinish(view){
 // ── Open project (per project: editor + AI picker) ──
 // ── Open project: two-step picker (editor → AI), remembered per project ──
 var PROJECTS=[];
-var RM={path:null, editor:null, ai:null};
+var RM={path:null, editor:null, ai:null, codexOpen:false};
 function resumeWith(pathStr){
   RM.path = pathStr;
+  RM.codexOpen = false;
   var proj=null; for(var i=0;i<PROJECTS.length;i++){ if(PROJECTS[i].path===pathStr) proj=PROJECTS[i]; }
   RM.editor = (proj && proj.preferred_editor) || null;
   RM.ai = (proj && proj.preferred_ai) || null;
@@ -952,15 +952,21 @@ function renderResume(force){
         return '<button class="'+(RM.editor===c.id?'sel':'')+'" onclick="pickEditor(\\''+c.id+'\\')">'+esc(c.label)+(c.builtin_agent?'<span class="rm-sub">has a built-in agent</span>':'')+'</button>';
       }).join('');
     }
+    // The Codex info panel and the selection are mutually exclusive states: while
+    // the panel is open, no AI shows selected and Open is disabled — the picker
+    // must never quietly launch Claude while the user is reading about Codex.
+    if(!ais.some(function(c){return c.connect_command;})) RM.codexOpen=false;
     var rows='';
     ais.forEach(function(c){
       var ready=c.mcp&&c.project_wired;
-      if(ready){ rows+='<button class="'+(RM.ai===c.id?'sel':'')+'" onclick="pickAi(\\''+c.id+'\\')">'+esc(c.label)+'<span class="rm-sub">Plexus-ready ✓'+(c.global_connection?' <b class="warn-a">· global</b>':'')+'</span></button>'; }
+      if(ready){ rows+='<button class="'+(!RM.codexOpen&&RM.ai===c.id?'sel':'')+'" onclick="pickAi(\\''+c.id+'\\')">'+esc(c.label)+'<span class="rm-sub">Plexus-ready ✓'+(c.global_connection?' <b class="warn-a">· global</b>':'')+'</span></button>'; }
       else if(c.connect_command){
-        rows+='<button onclick="toggleCodexHow(this)">'+esc(c.label)+'<span class="rm-sub">global-only — tap to see how to connect</span></button>'
-          +'<div class="codexhow" style="display:none">Codex only supports a global connection (OpenAI\\'s design), and Plexus never connects an AI globally — <b>you</b> do it: copy this, paste it in <b>any</b> terminal, press enter. One time per machine; undo anytime with the Disengage button in <span class="golink" onclick="closeResume();openTools()">Manage connections</span>. <span class="golink" onclick="openCodexLearn()">Learn more</span> about what this entails.'
-          +'<div class="cmd" onclick="copyText(this.textContent,this)">'+esc(c.connect_command)+'</div>'
-          +'After running it, hit <b>⌕ search again</b> below — Codex will show Plexus-ready.</div>';
+        rows+='<button class="'+(RM.codexOpen?'sel':'')+'" onclick="toggleCodexInfo()">'+esc(c.label)+'<span class="rm-sub">global-only — tap to see how to connect</span></button>';
+        if(RM.codexOpen){
+          rows+='<div class="codexhow">Codex only supports a global connection (OpenAI\\'s design), and Plexus never connects an AI globally — <b>you</b> do it: copy this, paste it in <b>any</b> terminal, press enter. One time per machine; undo anytime with the Disengage button in <span class="golink" onclick="closeResume();openTools()">Manage connections</span>. <span class="golink" onclick="openCodexLearn()">Learn more</span> about what this entails.'
+            +'<div class="cmd" onclick="copyText(this.textContent,this)">'+esc(c.connect_command)+'</div>'
+            +'After running it, hit <b>⌕ search again</b> below — Codex will show Plexus-ready and become selectable.</div>';
+        }
       }
       else{ rows+='<button class="dis" disabled title="Only MCP-capable, Plexus-connected AIs can use the brain — see AI Guidelines (☰).">'+esc(c.label)+'<span class="rm-sub">'+(c.mcp?'no per-project connection':'not MCP-capable')+'</span></button>'; }
     });
@@ -968,14 +974,22 @@ function renderResume(force){
       var first=ais.filter(function(c){return c.mcp&&c.project_wired;})[0];
       RM.ai=first?first.id:'none';
     }
-    rows+='<button class="'+(RM.ai==='none'?'sel':'')+'" onclick="pickAi(\\'none\\')">None — just open the editor<span class="rm-sub">use its built-in agent if it has one</span></button>';
+    rows+='<button class="'+(!RM.codexOpen&&RM.ai==='none'?'sel':'')+'" onclick="pickAi(\\'none\\')">None — just open the editor<span class="rm-sub">use its built-in agent if it has one</span></button>';
     aEl.innerHTML=rows;
+    var openBtn=document.getElementById('rm-open');
+    if(openBtn){
+      openBtn.disabled=!!RM.codexOpen;
+      openBtn.title=RM.codexOpen?'Codex is not connected yet — run the command, then ⌕ search again; or pick a Plexus-ready AI.':'';
+    }
+    if(RM.codexOpen) document.getElementById('rm-note').textContent='Codex is not connected yet — Open is paused. Run the command above and ⌕ search again, or tap Codex to close this and pick a Plexus-ready AI.';
   }).catch(function(){ eEl.innerHTML='<div class="hint">detection failed — try ⌕ search again.</div>'; });
 }
 function pickEditor(id){ RM.editor=id; renderResume(false); }
-function pickAi(id){ RM.ai=id; renderResume(false); }
+function pickAi(id){ RM.ai=id; RM.codexOpen=false; renderResume(false); }
+function toggleCodexInfo(){ RM.codexOpen=!RM.codexOpen; renderResume(false); }
 function rescanResume(el){ el.textContent='searching…'; renderResume(true); setTimeout(function(){ el.textContent='⌕ search again'; }, 1400); }
 function doOpenProject(btn){
+  if(RM.codexOpen){ document.getElementById('rm-note').textContent='Codex is not connected yet — run the command above and ⌕ search again, or tap Codex to close its panel and pick a Plexus-ready AI.'; return; }
   if(!RM.editor){ document.getElementById('rm-note').textContent='Pick a code editor first (install one if none are detected), or use the connect code below.'; return; }
   btn.disabled=true; var orig=btn.textContent; btn.textContent='opening…';
   fetch('/api/launcher/open-editor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:RM.path,client:RM.editor,ai:RM.ai||'none'})})

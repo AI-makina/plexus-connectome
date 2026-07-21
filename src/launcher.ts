@@ -243,11 +243,16 @@ async function detectClients(force = false): Promise<any[]> {
             connected = mcpConfigHasPlexus(c.mcpConfig); // Antigravity / Claude Desktop
         }
         // Codex is global-only by ITS design. Plexus NEVER writes global config —
-        // it only HONORS a connection the user made themselves in Codex's own
-        // settings (read-only check). No enable affordance exists.
+        // it only HONORS a connection the user made themselves (read-only check),
+        // surfaces the command for them to run, and may REMOVE its own footprint
+        // on their click (Disengage) — reach only ever shrinks by button.
         const effectiveWired = c.id === 'codex' ? codexEnabled() : !!c.project_wired;
+        const spec = mcpServerSpec();
         clients.push({
             id: c.id, label: c.label, kind: c.kind, mcp: !!c.mcp, project_wired: effectiveWired,
+            global_connection: c.id === 'codex' && effectiveWired,
+            connect_command: c.id === 'codex' && installed && !effectiveWired
+                ? `codex mcp add plexus -- "${spec.command}" ${spec.args.join(' ')}` : undefined,
             builtin_agent: !!c.builtin_agent, installed, can_open_folder: !!c.openBin, connected, hint: c.hint,
         });
     }
@@ -846,6 +851,20 @@ export function startLauncher(open = true) {
     // connected it themselves. Stub keeps stale UIs honest.
     app.post('/api/launcher/enable-codex', (_req, res) => {
         res.json({ ok: false, removed: true, note: 'Plexus never connects an AI globally. Codex is global-only by design — connect it yourself in Codex settings if you want it, and Plexus will honor it.' });
+    });
+
+    // Disengage Codex: remove PLEXUS'S OWN entry from Codex's config via Codex's
+    // own CLI, on the user's click. Allowed by the asymmetry rule: adding reach
+    // requires the user's hands; shrinking reach only requires their click
+    // (same footing as re-arm). Re-connecting later = the same paste ceremony.
+    app.post('/api/launcher/disengage-codex', (_req, res) => {
+        try {
+            execFileSync('codex', ['mcp', 'remove', 'plexus'], { encoding: 'utf8', timeout: 20000 });
+            clientsCache = null;
+            res.json({ ok: true, note: 'Plexus removed from Codex. To use Codex with Plexus again, run the connect command yourself — same one-time paste.' });
+        } catch (err: any) {
+            res.status(500).json({ error: String(err?.stderr || err?.message || err).slice(0, 200) });
+        }
     });
 
     app.post('/api/launcher/custom-ai/remove', (req, res) => {

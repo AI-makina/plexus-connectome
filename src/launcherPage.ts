@@ -401,6 +401,19 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   </div>
 </div>
 
+<!-- ── CODEX LEARN-MORE (full disclosure before the global connect) ── -->
+<div class="modal" id="codexlearn-modal" style="z-index:95" onclick="if(event.target===this)closeCodexLearn()">
+  <div class="modal-card guide" style="max-width:600px">
+    <h3>Connecting Codex globally — what it entails</h3>
+    <div class="g-sub">The full picture, before you run the command. Codex is the one exception in a per-project world, because OpenAI's design offers no per-project option.</div>
+    <div class="g-rule"><b>What happens:</b> the command writes one line in Codex's own settings — "launch the Plexus helper with every Codex session." From then on, Codex sessions inside a Plexus project automatically use that project's brain; Codex sessions anywhere else carry the helper <b>dormant and silent</b> — it does nothing there.</div>
+    <div class="g-item"><span class="n">✓</span><span><b>What does NOT happen.</b> No project or code goes "inside" Codex — brains stay in their folders, and which brain engages is decided per session by the folder it starts in. Nothing is sent to the internet: Plexus runs entirely on this Mac. No other AI is touched.</span></div>
+    <div class="g-item"><span class="n">!</span><span><b>The honest costs.</b> (1) A Plexus helper process starts with <b>every</b> Codex session, including work unrelated to Plexus — idle there, but present. (2) Any Plexus project you open with Codex will engage its brain automatically — including times you only meant to peek (the ⬡ badge always tells you, and the intent firewall guards writes). (3) It's machine-wide for Codex — there's no narrower version; that's the trade you're accepting. (4) If you later uninstall or move Plexus without disengaging, Codex will try to launch a missing helper — harmless, but untidy until you disengage.</span></div>
+    <div class="g-item"><span class="n">↩</span><span><b>The undo is complete.</b> The <span class="golink" onclick="closeCodexLearn();closeResume();openTools()">Disengage button</span> (or <span class="mono">codex mcp remove plexus</span>) deletes that one line and restores Codex exactly as it was. Nothing residual, no trace.</span></div>
+    <div style="margin-top:14px;text-align:right"><button class="ghost" onclick="closeCodexLearn()">close</button></div>
+  </div>
+</div>
+
 <!-- ── AI GUIDELINES (burger menu) ── -->
 <div class="modal" id="aiguide-modal" onclick="if(event.target===this)closeAiGuide()">
   <div class="modal-card guide">
@@ -876,6 +889,8 @@ function addCustomAi(btn){
     }).catch(function(){ btn.disabled=false; note.textContent='could not add'; });
 }
 function toggleCodexHow(btn){ var d=btn.nextElementSibling; if(d) d.style.display = d.style.display==='none' ? 'block' : 'none'; }
+function openCodexLearn(){ document.getElementById('codexlearn-modal').classList.add('show'); }
+function closeCodexLearn(){ document.getElementById('codexlearn-modal').classList.remove('show'); }
 function disengageCodex(btn){
   btn.disabled=true; var o=btn.textContent; btn.textContent='disengaging…';
   fetch('/api/launcher/disengage-codex',{method:'POST'}).then(function(x){return x.json();}).then(function(r){
@@ -930,7 +945,7 @@ function renderResume(force){
       if(ready){ rows+='<button class="'+(RM.ai===c.id?'sel':'')+'" onclick="pickAi(\\''+c.id+'\\')">'+esc(c.label)+'<span class="rm-sub">Plexus-ready ✓'+(c.global_connection?' <b class="warn-a">· global</b>':'')+'</span></button>'; }
       else if(c.connect_command){
         rows+='<button onclick="toggleCodexHow(this)">'+esc(c.label)+'<span class="rm-sub">global-only — tap to see how to connect</span></button>'
-          +'<div class="codexhow" style="display:none">Codex only supports a global connection (OpenAI\\'s design), and Plexus never connects an AI globally — <b>you</b> do it: copy this, paste it in <b>any</b> terminal, press enter. One time per machine; undo anytime with the Disengage button in <span class="golink" onclick="closeResume();openTools()">Manage connections</span>.'
+          +'<div class="codexhow" style="display:none">Codex only supports a global connection (OpenAI\\'s design), and Plexus never connects an AI globally — <b>you</b> do it: copy this, paste it in <b>any</b> terminal, press enter. One time per machine; undo anytime with the Disengage button in <span class="golink" onclick="closeResume();openTools()">Manage connections</span>. <span class="golink" onclick="openCodexLearn()">Learn more</span> about what this entails.'
           +'<div class="cmd" onclick="copyText(this.textContent,null)">'+esc(c.connect_command)+'</div>'
           +'After running it, hit <b>⌕ search again</b> below — Codex will show Plexus-ready.</div>';
       }

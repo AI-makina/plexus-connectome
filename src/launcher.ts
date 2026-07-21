@@ -292,9 +292,32 @@ export function startLauncher(open = true) {
         } catch { return 'unknown'; }
     }
 
+    // GROUND TRUTH for "is an AI session connected to this project right now":
+    // live plexus MCP processes and their anchor folders (cwd). Beats every
+    // record: a process either exists or it doesn't. Cached 10s.
+    let anchorsCache: { at: number; set: Set<string> } | null = null;
+    function liveMcpAnchors(): Set<string> {
+        if (anchorsCache && Date.now() - anchorsCache.at < 10000) return anchorsCache.set;
+        const set = new Set<string>();
+        try {
+            const pids = execFileSync('pgrep', ['-f', 'dist/cli.js mcp'], { encoding: 'utf8' })
+                .split('\n').map(s => s.trim()).filter(Boolean);
+            for (const pid of pids) {
+                try {
+                    const out2 = execFileSync('lsof', ['-a', '-p', pid, '-d', 'cwd', '-Fn'], { encoding: 'utf8' });
+                    const m = out2.split('\n').find(l => l.startsWith('n'));
+                    if (m) set.add(path.resolve(m.slice(1)));
+                } catch { /* pid exited mid-scan */ }
+            }
+        } catch { /* pgrep: no live sessions */ }
+        anchorsCache = { at: Date.now(), set };
+        return set;
+    }
+
     // Projects + live status
     app.get('/api/launcher/projects', async (_req, res) => {
         const reg = loadRegistry();
+        const anchors = liveMcpAnchors();
         const out = [];
         for (const p of reg.projects) {
             out.push({
@@ -308,6 +331,8 @@ export function startLauncher(open = true) {
                 // The -p flag itself remains a CLI/dev capability.)
                 connect_code: workCommand(p.name),
                 mcp_status: readMcpStatus(p.path),
+                // a live plexus MCP process anchored in this project (or a subfolder)
+                live_session: [...anchors].some(a => a === path.resolve(p.path) || a.startsWith(path.resolve(p.path) + path.sep)),
             });
         }
         res.json({

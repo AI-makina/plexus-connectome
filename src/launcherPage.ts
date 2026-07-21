@@ -531,7 +531,7 @@ async function loadProjects(){
       // record is ambiguous in 2.1.215, so it only ever earns explicit states).
       if(ago!==null && ago<360){
         const ms = document.getElementById('mcp-'+p.api_port);
-        if(ms && !REARMED[ms.getAttribute('data-path')]){
+        if(ms && !REARMED[ms.getAttribute('data-path')] && ms.textContent.indexOf('connected ✓')===-1){
           ms.innerHTML = 'AI connection: <b class="ok-j">active ✓</b> <span class="ghosty">· used '+(ago<1?'just now':(ago<60? ago+'m ago' : Math.round(ago/60)+'h ago'))+'</span>';
         }
       }
@@ -589,6 +589,8 @@ function copyText(t, btn){navigator.clipboard.writeText(t);if(btn){const o=btn.t
 var REARMED={}; // paths re-armed this page-visit: keep the instruction visible across card re-renders
 function mcpStatusHtml(p){
   if(REARMED[p.path]) return 'AI connection: <span class="rearmnote">re-armed ✓ — close the open terminal(s) for this project; the permission question returns on the next session</span>';
+  // ground truth first: a live plexus process anchored in this project right now
+  if(p.live_session) return 'AI connection: <b class="ok-j">connected ✓</b> <span class="ghosty">· session open now</span>';
   var s=p.mcp_status;
   var re='<span class="rearm" data-p="'+esc(p.path)+'" onclick="rearmMcp(this)" title="Resets the recorded choice for this project — approves nothing by itself; the next AI session here shows the permission question again.">re-arm ⟲</span>';
   if(s==='approved') return 'AI connection: <b class="ok-j">approved ✓</b> · '+re;

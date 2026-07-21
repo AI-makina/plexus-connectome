@@ -170,7 +170,7 @@ const AI_CLIENTS: AiClient[] = [
     { id: 'cursor', label: 'Cursor', kind: 'editor', builtin_agent: true, bin: 'cursor', openBin: 'cursor', app: '/Applications/Cursor.app', bundleId: 'com.todesktop.230313mzl4w4u92', mcpConfig: CURSOR_MCP_CONFIG,
         hint: 'Editor with a built-in agent. Any AI CLI also runs in its terminal.' },
     { id: 'codex', label: 'Codex CLI', kind: 'ai', mcp: true, project_wired: false, bin: 'codex', openBin: null, app: null, mcpConfig: CODEX_MCP_CONFIG,
-        hint: 'MCP-capable. Codex only supports a global connection (its own design) — enable it once, explicitly; Plexus stays silent outside Plexus projects.' },
+        hint: 'MCP-capable, but global-only by OpenAI’s design — Plexus never connects any AI globally, so Codex becomes selectable only if you connect it yourself in Codex’s own settings (Plexus honors that), or when OpenAI ships a per-project option.' },
     { id: 'gemini', label: 'Gemini CLI', kind: 'ai', mcp: true, project_wired: true, bin: 'gemini', openBin: null, app: null, mcpConfig: GEMINI_MCP_CONFIG,
         hint: 'MCP-capable and Plexus-ready — connects per project (.gemini/settings.json); the ⬡ badge confirms on first use.' },
     { id: 'claude-desktop', label: 'Claude Desktop', kind: 'chat', bin: null, openBin: null, app: '/Applications/Claude.app', bundleId: 'com.anthropic.claudefordesktop', mcpConfig: CLAUDE_DESKTOP_CONFIG,
@@ -242,12 +242,12 @@ async function detectClients(force = false): Promise<any[]> {
         } else if (installed && c.mcpConfig) {
             connected = mcpConfigHasPlexus(c.mcpConfig); // Antigravity / Claude Desktop
         }
-        // Codex is global-only by ITS design: wired = the user explicitly enabled it
-        // (one-time, disclosed). Everyone else's wiring is per-project and static.
+        // Codex is global-only by ITS design. Plexus NEVER writes global config —
+        // it only HONORS a connection the user made themselves in Codex's own
+        // settings (read-only check). No enable affordance exists.
         const effectiveWired = c.id === 'codex' ? codexEnabled() : !!c.project_wired;
         clients.push({
             id: c.id, label: c.label, kind: c.kind, mcp: !!c.mcp, project_wired: effectiveWired,
-            can_enable: c.id === 'codex' && installed && !effectiveWired,
             builtin_agent: !!c.builtin_agent, installed, can_open_folder: !!c.openBin, connected, hint: c.hint,
         });
     }
@@ -841,19 +841,11 @@ export function startLauncher(open = true) {
         }
     });
 
-    // One-time, explicit Codex enable. Global is Codex's ONLY mechanism (no
-    // per-project surface exists in its design), so the user opts in knowingly —
-    // and conditional dormant instructions keep Plexus silent for Codex outside
-    // Plexus projects. Uses Codex's own registration command.
+    // (Removed) enable-codex: Plexus never writes global config for ANY client —
+    // that is the core v2 principle. Codex is honored read-only if the user
+    // connected it themselves. Stub keeps stale UIs honest.
     app.post('/api/launcher/enable-codex', (_req, res) => {
-        const spec = mcpServerSpec();
-        try {
-            execFileSync('codex', ['mcp', 'add', 'plexus', '--', spec.command, ...spec.args], { encoding: 'utf8', timeout: 20000 });
-            clientsCache = null;
-            res.json({ ok: true, note: 'Codex is now Plexus-enabled. It connects globally (its only mechanism) but stays silent outside Plexus projects.' });
-        } catch (err: any) {
-            res.status(500).json({ error: String(err?.stderr || err?.message || err).slice(0, 200) });
-        }
+        res.json({ ok: false, removed: true, note: 'Plexus never connects an AI globally. Codex is global-only by design — connect it yourself in Codex settings if you want it, and Plexus will honor it.' });
     });
 
     app.post('/api/launcher/custom-ai/remove', (req, res) => {

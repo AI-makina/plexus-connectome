@@ -403,7 +403,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <div class="g-rule"><b>The rule:</b> only <b>MCP-capable</b> AIs can use a Plexus brain. MCP (Model Context Protocol) is the open standard an AI uses to talk to tools like Plexus — without it, an AI opened in a Plexus project works <b>blind</b>: no claim checks, no consultations, no memory, no protection. That defeats the purpose of Plexus, so non-MCP AIs are detected and listed, but never selectable for Plexus work.</div>
     <div class="g-item"><span class="n">1</span><span><b>Starting is automatic for every AI.</b> Whichever AI you pick in "Open project" starts by itself in the project window's terminal — Claude, Gemini, an enabled Codex, or any MCP-capable AI you've added. What differs between them is only how each one <b>connects to the Plexus brain</b> (next two points).</span></div>
     <div class="g-item"><span class="n">2</span><span><b>Zero-setup connection: Claude Code and Gemini CLI.</b> Every Plexus project carries their connection files inside its folder, written automatically when the project is created or connected — nothing to configure, ever, including for future projects. Claude asks your permission once per project; for Gemini, the ⬡ badge in its first reply is your confirmation.</span></div>
-    <div class="g-item"><span class="n">3</span><span><b>One-time-setup connection: Codex CLI.</b> Codex has no per-project option (OpenAI's design — global only), so it needs a single explicit <b>Enable</b> click where you see it detected. After that one click, Codex also connects to every Plexus project automatically — and stays dormant and silent everywhere outside them. Undo anytime by removing plexus from Codex's MCP settings.</span></div>
+    <div class="g-item"><span class="n">3</span><span><b>Codex CLI — no per-project connection exists.</b> Codex only supports a global, always-on connection (OpenAI's design), and Plexus <b>never connects any AI globally</b> — per-project flexibility is the whole point. So Codex shows as detected but not selectable. Two ways it becomes selectable: OpenAI ships a per-project option (Plexus adopts it immediately), or you connect Plexus inside Codex's own settings yourself — a choice you make in their product, which Plexus will detect and honor.</span></div>
     <div class="g-item"><span class="n">4</span><span><b>Built-in editor agents.</b> Copilot, Cursor's agent, and Antigravity's agent live inside their editors and cannot be launched or paired from outside. Choose "None — just open the editor" and use them there. Their per-project Plexus connection also ships later.</span></div>
     <div class="g-item"><span class="n">5</span><span><b>Adding a new or open-source AI.</b> Under ☰ → Manage connections, add any AI by its command name. Mark it MCP-capable only if it reads the project's <span class="mono">.mcp.json</span> — then it becomes selectable for Plexus work. Unmarked AIs stay listed but non-selectable.</span></div>
     <div class="g-item"><span class="n">6</span><span><b>AIs are never "linked" to an editor.</b> AI CLIs are system-wide: any detected AI works with any editor, instantly — Plexus assembles the pairing fresh each time you open a project. Nothing to configure inside the editor's settings.</span></div>
@@ -847,9 +847,9 @@ function renderTools(force){
     }).join(''):'<div class="hint">No code editors detected — install VS Code, Cursor, or Antigravity, then ⌕ search again.</div>';
     var ais=cs.filter(function(c){return c.kind==='ai'&&(c.installed||c.custom);});
     aEl.innerHTML=ais.length?ais.map(function(c){
-      var st=!c.installed?'not on PATH':(c.mcp&&c.project_wired?'Plexus-ready ✓':(c.can_enable?'needs one-time enable':(c.mcp?'not connected':'not MCP-capable')));
+      var st=!c.installed?'not on PATH':(c.mcp&&c.project_wired?'Plexus-ready ✓':(c.mcp?'no per-project connection':'not MCP-capable'));
       var right=c.custom?'<button class="ghost" data-bin="'+esc(c.id.slice(7))+'" onclick="removeCustomAi(this)">✕</button>'
-        :(c.can_enable?'<button onclick="enableCodex(this,\\'tools\\')">Enable</button>':'<span class="ok">'+(c.mcp&&c.project_wired?'✓':'·')+'</span>');
+        :'<span class="ok">'+(c.mcp&&c.project_wired?'✓':'·')+'</span>';
       return '<div class="clientrow"><div class="ci"><b>'+esc(c.label)+'</b><span class="c-state">'+st+'</span>'+(c.hint?'<div class="c-hint">'+esc(c.hint)+'</div>':'')+'</div>'+right+'</div>';
     }).join(''):'<div class="hint">No AI CLIs detected yet.</div>';
   }).catch(function(){ eEl.innerHTML='<div class="hint">detection failed — try ⌕ search again.</div>'; });
@@ -871,15 +871,6 @@ function removeCustomAi(btn){
   fetch('/api/launcher/custom-ai/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bin:btn.getAttribute('data-bin')})})
     .then(function(){ renderTools(false); }).catch(function(){});
 }
-function enableCodex(btn, ctx){
-  btn.disabled=true; var o=btn.textContent; btn.textContent='enabling…';
-  fetch('/api/launcher/enable-codex',{method:'POST'}).then(function(x){return x.json();}).then(function(r){
-    btn.disabled=false;
-    if(r.ok){ if(ctx==='resume') renderResume(true); else renderTools(true); }
-    else { btn.textContent=o; alertless(btn, r.error); }
-  }).catch(function(){ btn.disabled=false; btn.textContent=o; });
-}
-function alertless(btn, msg){ var s=document.createElement('div'); s.className='hint'; s.textContent='enable failed: '+(msg||'unknown'); btn.parentElement.appendChild(s); setTimeout(function(){ s.remove(); }, 6000); }
 function wizFinish(view){
   fetch('/api/launcher/onboarding/complete',{method:'POST'}).catch(function(){});
   document.getElementById('wizard').classList.remove('show');
@@ -921,8 +912,7 @@ function renderResume(force){
     ais.forEach(function(c){
       var ready=c.mcp&&c.project_wired;
       if(ready){ rows+='<button class="'+(RM.ai===c.id?'sel':'')+'" onclick="pickAi(\\''+c.id+'\\')">'+esc(c.label)+'<span class="rm-sub">Plexus-ready ✓</span></button>'; }
-      else if(c.can_enable){ rows+='<button onclick="enableCodex(this,\\'resume\\')" title="Codex only supports a global connection (its own design). Enabling is one-time and explicit; Plexus stays silent outside Plexus projects.">'+esc(c.label)+'<span class="rm-sub">enable — one-time connection for this AI</span></button>'; }
-      else{ rows+='<button class="dis" disabled title="Only MCP-capable, Plexus-connected AIs can use the brain — see AI Guidelines (☰).">'+esc(c.label)+'<span class="rm-sub">'+(c.mcp?'not connected':'not MCP-capable')+'</span></button>'; }
+      else{ rows+='<button class="dis" disabled title="Only MCP-capable, Plexus-connected AIs can use the brain — see AI Guidelines (☰).">'+esc(c.label)+'<span class="rm-sub">'+(c.mcp?'no per-project connection':'not MCP-capable')+'</span></button>'; }
     });
     if(RM.ai!=='none' && !ais.some(function(c){return c.id===RM.ai&&c.mcp&&c.project_wired;})){
       var first=ais.filter(function(c){return c.mcp&&c.project_wired;})[0];

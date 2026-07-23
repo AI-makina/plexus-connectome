@@ -589,32 +589,9 @@ app.post('/api/engine/defer-update', (_req, res) => {
     res.json({ ok: true, pending: p });
 });
 
-// ─── Feedback System ─────────────────────────────────────────────
-
-app.post('/api/feedback', (req, res) => {
-    try {
-        const feedback = {
-            id: `FB-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`,
-            timestamp: new Date().toISOString(),
-            status: 'pending',
-            ...req.body
-        };
-
-        const dateSlug = feedback.timestamp.split('T')[0];
-        const titleSlug = (feedback.title || 'feedback').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
-        const fileName = `${dateSlug}_${titleSlug}.json`;
-
-        // Feedback lives with the project's own integration data — never a
-        // hardcoded absolute path on one developer's machine.
-        const feedbackDir = path.join(getIntegrationPath(), 'feedback');
-        if (!fs.existsSync(feedbackDir)) fs.mkdirSync(feedbackDir, { recursive: true });
-
-        fs.writeFileSync(path.join(feedbackDir, fileName), JSON.stringify(feedback, null, 2));
-        res.json({ success: true, file: fileName, id: feedback.id });
-    } catch (err: any) {
-        res.status(500).json({ error: err.message });
-    }
-});
+// (A legacy second POST /api/feedback lived here — Express dispatches to the
+// first matching route, so it was unreachable dead code. Removed in Phase 3;
+// the questionnaire endpoint above is the one feedback intake.)
 
 // ─── Analysis ────────────────────────────────────────────────────
 

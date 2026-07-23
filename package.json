@@ -1,6 +1,6 @@
 {
   "name": "plexus",
-  "version": "1.0.83",
+  "version": "1.0.84",
   "description": "Plexus Neural Connectome Engine",
   "main": "dist/index.js",
   "bin": {
@@ -9,7 +9,8 @@
   "scripts": {
     "start": "ts-node src/index.ts",
     "dev": "nodemon src/index.ts",
-    "build": "tsc && npm run stamp",
+    "build": "tsc && npm run stamp && node scripts/edition.js operator",
+    "build:user": "tsc && npm run stamp && node scripts/edition.js user",
     "stamp": "node scripts/stamp.js"
   },
   "keywords": [],

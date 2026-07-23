@@ -234,6 +234,20 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .menu.show{display:block}
   .menu-item{padding:9px 12px;border-radius:8px;font:500 12.5px var(--sans);color:var(--hi);cursor:pointer;white-space:nowrap}
   .menu-item:hover{background:rgba(139,92,246,.16)}
+  /* ── License banner + update pill + support/FAQ (user edition) ── */
+  .licnote{margin:0 0 14px;padding:10px 14px;border-radius:11px;font:500 12.5px var(--sans);display:none}
+  .licnote.grace{display:block;color:var(--gold);border:1px solid rgba(245,192,68,.35);background:rgba(245,192,68,.07)}
+  .licnote.upd{display:block;color:var(--azure);border:1px solid rgba(111,168,255,.35);background:rgba(111,168,255,.07)}
+  .licnote b{font-weight:650}
+  .faq-search{width:100%;background:var(--ink2);border:1px solid var(--line2);border-radius:10px;padding:9px 12px;color:var(--hi);font:13px var(--sans);outline:none;margin:2px 0 10px}
+  .faq-search:focus{border-color:rgba(167,139,250,.55)}
+  .faq-item{border-bottom:1px solid var(--line1);padding:8px 2px}
+  .faq-q{cursor:pointer;font:600 12.8px var(--sans);color:var(--ice)}
+  .faq-q:hover{color:#fff}
+  .faq-a{display:none;color:var(--mid);font-size:12.5px;padding:6px 0 2px;line-height:1.55}
+  .faq-item.open .faq-a{display:block}
+  .sup-field{display:block;font:600 11.5px var(--sans);color:var(--ice);margin:12px 0 4px}
+  .sup-ok{color:var(--jade);font-size:12.5px;margin-top:8px;min-height:15px}
   .guide{max-width:640px;max-height:82vh;overflow:auto}
   .guide h3{font:600 17px var(--sans);margin-bottom:2px}
   .guide .g-sub{color:var(--mid);font-size:12.5px;margin-bottom:14px}
@@ -380,6 +394,73 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   </div>
 </div>
 
+<!--USR-->
+<!-- ── SUPPORT (burger menu · user edition) ── -->
+<div class="modal" id="support-modal" onclick="if(event.target===this)closeSupport()">
+  <div class="modal-card guide" style="max-width:560px">
+    <h3>Support</h3>
+    <div class="g-sub">Search the answers below — or skip straight to messaging us, any time.</div>
+    <input class="faq-search" id="faq-q" placeholder="search… (e.g. re-arm, code, update)" oninput="faqFilter()">
+    <div id="faq-list" style="max-height:280px;overflow-y:auto"></div>
+    <div style="margin-top:16px;border-top:1px solid var(--line2);padding-top:12px">
+      <div style="font:600 13px var(--sans);color:var(--ice)">Message us</div>
+      <span class="sup-field">Subject</span>
+      <input class="faq-search" id="sup-subject" style="margin:0" placeholder="what is this about?">
+      <span class="sup-field">Message</span>
+      <textarea id="sup-body" rows="3" style="width:100%;font-family:var(--sans);font-size:13px"></textarea>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:10px">
+        <button class="primary" onclick="sendSupportMsg()">Send to Skyfynd</button>
+        <span class="sup-ok" id="sup-note"></span>
+      </div>
+    </div>
+    <div style="margin-top:10px;text-align:right"><button class="ghost" onclick="closeSupport()">close</button></div>
+  </div>
+</div>
+
+<!-- ── SEND FEEDBACK (burger menu · user edition) ── -->
+<div class="modal" id="feedback-modal" onclick="if(event.target===this)closeFeedback()">
+  <div class="modal-card guide" style="max-width:520px">
+    <h3>Send feedback</h3>
+    <div class="g-sub">Tell us what to make better. This goes straight to the people building Plexus.</div>
+    <span class="sup-field">This is…</span>
+    <select id="fb-type" class="faq-search" style="margin:0">
+      <option value="bug">something that seems broken</option>
+      <option value="idea" selected>an idea or feature I'd love</option>
+      <option value="ux">something confusing or clumsy</option>
+      <option value="praise">something that works great</option>
+    </select>
+    <span class="sup-field">What happened / what would you change?</span>
+    <textarea id="fb-body" rows="4" style="width:100%;font-family:var(--sans);font-size:13px"></textarea>
+    <span class="sup-field">If you could fix it yourself, what would the fix look like? <span style="color:var(--ghost);font-weight:400">(optional)</span></span>
+    <textarea id="fb-fix" rows="2" style="width:100%;font-family:var(--sans);font-size:13px"></textarea>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:12px">
+      <button class="primary" onclick="sendFeedback()">Send feedback</button>
+      <span class="sup-ok" id="fb-note"></span>
+    </div>
+    <div style="margin-top:8px;text-align:right"><button class="ghost" onclick="closeFeedback()">close</button></div>
+  </div>
+</div>
+
+<!-- ── REPORT A PROBLEM (burger menu · user edition) ── -->
+<div class="modal" id="problem-modal" onclick="if(event.target===this)closeProblem()">
+  <div class="modal-card guide" style="max-width:520px">
+    <h3>Report a problem</h3>
+    <div class="g-sub">Something misbehaving? Describe it — attaching the log helps us fix it much faster.</div>
+    <span class="sup-field">What went wrong, and what were you doing when it happened?</span>
+    <textarea id="pr-body" rows="4" style="width:100%;font-family:var(--sans);font-size:13px"></textarea>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin:12px 0;color:var(--mid);font-size:12.3px;cursor:pointer">
+      <input type="checkbox" id="pr-log" checked style="margin-top:2px;accent-color:#A78BFA">
+      <span>Attach the app's recent activity log (paths to your personal folders are removed — never your code or project content).</span>
+    </label>
+    <div style="display:flex;gap:10px;align-items:center">
+      <button class="primary" onclick="sendProblem()">Send report</button>
+      <span class="sup-ok" id="pr-note"></span>
+    </div>
+    <div style="margin-top:8px;text-align:right"><button class="ghost" onclick="closeProblem()">close</button></div>
+  </div>
+</div>
+<!--/USR-->
+
 <!-- ── LAUNCH GUIDE (burger menu) ── -->
 <div class="modal" id="guide-modal" onclick="if(event.target===this)closeGuide()">
   <div class="modal-card guide">
@@ -449,7 +530,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <img class="brand-icon" src="/assets/launcher/plexus_icon_1.png" alt=""><h1>PLEXUS</h1><span class="tag">launcher · evidence protocol</span>
     <span style="margin-left:auto;display:flex;gap:16px;align-items:baseline">
       <span onclick="replayIntro()" style="cursor:pointer;color:var(--lo);font:500 11px var(--mono)" data-tip="watch the Plexus intro again">intro ⟲</span>
-      <a href="/manager" style="color:var(--azure);text-decoration:none;font:500 12px var(--sans)">Manager →</a>
+      <!--OP--><a href="/manager" style="color:var(--azure);text-decoration:none;font:500 12px var(--sans)">Manager →</a><!--/OP-->
       <span class="burger-wrap">
         <span class="burger" onclick="toggleMenu(event)" data-tip="menu">☰</span>
         <div class="menu" id="topmenu">
@@ -458,10 +539,18 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
           <div class="menu-item" onclick="openAiGuide()">AI Guidelines</div>
           <div class="menu-sec">Connections</div>
           <div class="menu-item" onclick="openTools()">Manage connections</div>
+          <!--USR-->
+          <div class="menu-sec">Help</div>
+          <div class="menu-item" onclick="openSupport()">Support</div>
+          <div class="menu-item" onclick="openFeedback()">Send feedback</div>
+          <div class="menu-item" onclick="openProblem()">Report a problem</div>
+          <!--/USR-->
         </div>
       </span>
     </span>
   </header>
+
+  <!--USR--><div class="licnote" id="lic-note"></div><div class="licnote" id="upd-note"></div><!--/USR-->
 
   <!-- HOME -->
   <div class="view active" id="v-home">
@@ -677,6 +766,77 @@ function toggleQ(el, e){
 }
 function openGuide(){ document.getElementById('topmenu').classList.remove('show'); document.getElementById('guide-modal').classList.add('show'); }
 function closeGuide(){ document.getElementById('guide-modal').classList.remove('show'); }
+
+// ── Support / feedback / problem (user edition; elements absent in operator build) ──
+var FAQ=[
+ {q:'What is a connectome (a "brain")?',a:'The living evidence map of one project: what exists, what talks to what, what failed before, what the AI verified. It lives inside that project\'s folder on your computer and belongs to you.'},
+ {q:'Which AIs can I use with Plexus?',a:'Any AI command-line tool on your computer that supports project connections (MCP). Detected ones appear in "Open project"; MCP-capable ones are selectable, per project, never globally.'},
+ {q:'The AI asked about an MCP server — which option do I pick?',a:'Choose "Use this MCP server." It approves exactly what you can see, once per project. Avoid the "all future servers" option — it pre-approves things that don\'t exist yet.'},
+ {q:'What does re-arm \\u27f2 do?',a:'It clears the project\'s remembered answer so the one-time permission question is asked again on your next session. It approves nothing by itself — it only re-asks.'},
+ {q:'How do I open a project the right way?',a:'Click "Open project" on its card: your editor opens anchored to the project with a terminal already running your chosen AI. Every terminal in that window starts linked to the project.'},
+ {q:'Can I work on two projects at once?',a:'Yes — each project opens in its own editor window with its own brain, engine, and terminals. Two projects means two windows; nothing mixes.'},
+ {q:'What is the connect code on each card?',a:'A one-line command that links a terminal to that project before you engage the AI. Paste it in a terminal — never into an AI chat.'},
+ {q:'Why does Codex wear a "global" tag?',a:'Codex only supports a global, always-on connection (its maker\'s design). Plexus never connects an AI globally, so you run that one command yourself, once — and the tag keeps the exception visible. Disengage removes it with one click.'},
+ {q:'Where is my data? Does anything leave my computer?',a:'Everything — brains, evidence, code — stays on your computer. The only things sent out are your license check (version, platform, project count — never names or content) and whatever you explicitly submit here.'},
+ {q:'What happens if my license pauses or my trial ends?',a:'The launcher\'s doors close, but nothing is deleted and nothing is held hostage — your projects and brains stay intact on your computer. Reactivating restores everything instantly.'},
+ {q:'How do updates work?',a:'When a new version is available you\'ll see a note here. Each running brain also asks for consent before hopping onto a new build — updates never force themselves.'},
+ {q:'How do I remove a project from Plexus?',a:'Click the \\u2715 on its card. Plexus forgets the project (with an undo window) — your folder and files are never deleted.'}
+];
+function renderFaq(list){
+  var h='';
+  for(var i=0;i<list.length;i++){ h+='<div class="faq-item" onclick="this.classList.toggle(\\'open\\')"><div class="faq-q">'+list[i].q+'</div><div class="faq-a">'+list[i].a+'</div></div>'; }
+  document.getElementById('faq-list').innerHTML = h || '<div style="color:var(--lo);font-size:12.5px;padding:8px 2px">no matches — the message box below reaches a human</div>';
+}
+function faqFilter(){
+  var t=document.getElementById('faq-q').value.toLowerCase().trim();
+  if(!t) return renderFaq(FAQ);
+  renderFaq(FAQ.filter(function(f){ return (f.q+' '+f.a).toLowerCase().indexOf(t)>=0 }));
+}
+function openSupport(){ document.getElementById('topmenu').classList.remove('show'); renderFaq(FAQ); document.getElementById('support-modal').classList.add('show'); }
+function closeSupport(){ document.getElementById('support-modal').classList.remove('show'); }
+function openFeedback(){ document.getElementById('topmenu').classList.remove('show'); document.getElementById('feedback-modal').classList.add('show'); }
+function closeFeedback(){ document.getElementById('feedback-modal').classList.remove('show'); }
+function openProblem(){ document.getElementById('topmenu').classList.remove('show'); document.getElementById('problem-modal').classList.add('show'); }
+function closeProblem(){ document.getElementById('problem-modal').classList.remove('show'); }
+function sendSupportMsg(){
+  var b=document.getElementById('sup-body').value.trim(); var n=document.getElementById('sup-note');
+  if(!b){ n.textContent='write a message first'; return; }
+  n.textContent='sending…';
+  fetch('/api/launcher/support',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subject:document.getElementById('sup-subject').value.trim(),body:b,include_log:false})})
+    .then(function(r){return r.json()}).then(function(j){ n.textContent = j&&j.ok ? 'sent \\u2713 — we reply to your email' : ((j&&j.error)||'could not send'); })
+    .catch(function(){ n.textContent='could not send — check your connection'; });
+}
+function sendFeedback(){
+  var b=document.getElementById('fb-body').value.trim(); var n=document.getElementById('fb-note');
+  if(!b){ n.textContent='tell us something first'; return; }
+  var fix=document.getElementById('fb-fix').value.trim();
+  n.textContent='sending…';
+  fetch('/api/launcher/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:document.getElementById('fb-type').value,body:b+(fix?'\\n\\n[their fix idea] '+fix:'')})})
+    .then(function(r){return r.json()}).then(function(j){ n.textContent = j&&j.ok ? 'received \\u2713 — thank you' : ((j&&j.error)||'could not send'); })
+    .catch(function(){ n.textContent='could not send — check your connection'; });
+}
+function sendProblem(){
+  var b=document.getElementById('pr-body').value.trim(); var n=document.getElementById('pr-note');
+  if(!b){ n.textContent='describe the problem first'; return; }
+  n.textContent='sending…';
+  fetch('/api/launcher/support',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subject:'[problem report]',body:b,include_log:document.getElementById('pr-log').checked})})
+    .then(function(r){return r.json()}).then(function(j){ n.textContent = j&&j.ok ? 'report sent \\u2713 — thank you' : ((j&&j.error)||'could not send'); })
+    .catch(function(){ n.textContent='could not send — check your connection'; });
+}
+(function licenseBoot(){
+  var ln=document.getElementById('lic-note'); if(!ln) return; // operator build: elements stripped
+  fetch('/api/launcher/license/status').then(function(r){return r.json()}).then(function(j){
+    if(j && j.state==='grace'){ ln.className='licnote grace'; ln.innerHTML='<b>License check pending</b> — Plexus couldn\\u2019t reach the license service. Everything keeps working for <b>'+j.days_left+' more day'+(j.days_left===1?'':'s')+'</b>; one successful check clears this.'; }
+    else if(j && j.kind==='trial' && j.trial_ends){
+      var d=Math.ceil((new Date(j.trial_ends).getTime()-Date.now())/86400000);
+      if(d>0 && d<=15){ ln.className='licnote grace'; ln.innerHTML='<b>Trial</b> — '+d+' day'+(d===1?'':'s')+' left. Your projects and brains are yours either way.'; }
+    }
+  }).catch(function(){});
+  var un=document.getElementById('upd-note'); if(!un) return;
+  fetch('/api/launcher/update-check').then(function(r){return r.json()}).then(function(j){
+    if(j && j.available){ un.className='licnote upd'; un.innerHTML='<b>Update available</b> — Plexus '+j.available.version+' is out'+(j.available.notes&&j.available.notes.length?': '+j.available.notes[0]:'')+'. It installs on your say-so, never by itself.'; }
+  }).catch(function(){});
+})();
 
 // new project
 async function createProject(){

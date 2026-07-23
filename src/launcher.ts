@@ -6,6 +6,10 @@ import http from 'http';
 import { spawn, execFile, execFileSync } from 'child_process';
 import { LAUNCHER_HTML } from './launcherPage';
 import { MANAGER_HTML } from './managerPage';
+import { ACTIVATION_HTML } from './activationPage';
+import { isOperator } from './core/edition';
+import { licenseState, activate as licenseActivate, heartbeat as licenseHeartbeat, readLicense, saveLicense } from './core/license';
+import { fleetPost, fleetGet } from './core/fleet';
 
 // ─── The Plexus Launcher — the plug-and-play front door ───────────────────────
 // `plexus start` opens ONE window where everything begins:
@@ -272,6 +276,53 @@ async function detectClients(force = false): Promise<any[]> {
     return clients;
 }
 
+// ─── Fleet plumbing (user edition) ────────────────────────────────────────────
+
+/** Launcher/engine log tail with home paths redacted — enough to diagnose,
+ *  nothing that identifies projects. Attached to problem reports on request. */
+function recentLogExcerpt(): string {
+    const cands = [path.join(os.homedir(), '.plexus', 'launcher.log'), '/tmp/plexus-launcher.log'];
+    for (const f of cands) {
+        try { return fs.readFileSync(f, 'utf8').slice(-6000).split(os.homedir()).join('~'); } catch { /* next */ }
+    }
+    return '(no log file found)';
+}
+
+/** One heartbeat: lawful minimum only — token, version, platform, connectome
+ *  COUNT. Piggybacks the consented AI-feedback forward. */
+async function runHeartbeat() {
+    let connectomes = 0;
+    try { connectomes = loadRegistry().projects.length; } catch { /* fresh install */ }
+    const ls = await licenseHeartbeat({ connectomes, engines: [] });
+    forwardAiFeedback().catch(() => { /* best-effort */ });
+    return ls;
+}
+
+/** Forward NEW AI-questionnaire answers (product feedback the AIs gave inside
+ *  running engines) to the fleet — only with the user's explicit consent flag,
+ *  only answer text + theme + model, never a project name. High-water mark in
+ *  the license file prevents re-sends. */
+async function forwardAiFeedback(): Promise<void> {
+    const lic = readLicense();
+    if (!lic?.token || !lic.share_ai_ok || isOperator()) return;
+    const since = lic.ai_forwarded_until || '1970-01-01';
+    let projects: any[] = [];
+    try { projects = loadRegistry().projects; } catch { return; }
+    const items: any[] = [];
+    for (const p of projects.slice(0, 40)) {
+        const fb: any = await fetchJson(p.api_port, '/api/feedback').catch(() => null);
+        for (const r of (fb?.recent || [])) {
+            if (r?.ts && r.ts > since && r.answer) {
+                items.push({ ts: r.ts, theme: r.theme || null, question: r.question || null, body: String(r.answer).slice(0, 2000), model: r.model || null });
+            }
+        }
+    }
+    if (!items.length) return;
+    items.sort((a, b) => (a.ts < b.ts ? -1 : 1));
+    const r = await fleetPost('/api/plexus/feedback', { token: lic.token, source: 'ai', items: items.slice(-10) }, 12000);
+    if (!r?.error) { lic.ai_forwarded_until = items[items.length - 1].ts; saveLicense(lic); }
+}
+
 // ─── Server ───────────────────────────────────────────────────────────────────
 
 export function startLauncher(open = true) {
@@ -298,7 +349,31 @@ export function startLauncher(open = true) {
     app.use('/assets', express.static(path.join(__dirname, '..', 'assets')));
 
     app.get('/', (_req, res) => {
-        res.set('Content-Type', 'text/html').send(LAUNCHER_HTML);
+        // User edition: entitlement gate. Fresh or paused installs get the
+        // activation page — the dashboard (and all data) stays local either way.
+        const ls = licenseState();
+        if (ls.state === 'unactivated' || ls.state === 'inactive') {
+            const st: any = { state: ls.state };
+            if (ls.state === 'inactive') {
+                st.reason = ls.reason; st.msg = ls.lic.last_msg || null;
+                st.email = ls.lic.email || null; st.name = ls.lic.name || null;
+            }
+            return res.set('Content-Type', 'text/html').send(ACTIVATION_HTML.replace('__ACT_STATE__', JSON.stringify(st)));
+        }
+        // The operator's page carries no user-support surface, and vice versa.
+        const html = isOperator()
+            ? LAUNCHER_HTML.replace(/<!--USR-->[\s\S]*?<!--\/USR-->/g, '')
+            : LAUNCHER_HTML.replace(/<!--OP-->[\s\S]*?<!--\/OP-->/g, '');
+        res.set('Content-Type', 'text/html').send(html);
+    });
+
+    // Plexus License Agreement (linked from activation + burger). Plain, readable.
+    app.get('/legal', (_req, res) => {
+        try {
+            const md = fs.readFileSync(path.join(__dirname, '..', 'docs', 'PLEXUS_EULA.md'), 'utf8');
+            const esc = md.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+            res.set('Content-Type', 'text/html').send('<!doctype html><html><head><meta charset="utf-8"><title>Plexus License Agreement</title><style>body{background:#07060E;color:#D6D2E8;font:14px/1.7 -apple-system,sans-serif;max-width:760px;margin:40px auto;padding:0 22px;white-space:pre-wrap}</style></head><body>' + esc + '</body></html>');
+        } catch { res.status(404).send('license text not found'); }
     });
 
     // What did Claude Code record about this project's .mcp.json question?
@@ -374,6 +449,7 @@ export function startLauncher(open = true) {
 
     // ─── Plexus Manager (vendor CRM) ────────────────────────────────────────
     app.get('/manager', (_req, res) => {
+        if (!isOperator()) return res.status(404).send('Not available in this edition.');
         res.set('Content-Type', 'text/html').send(MANAGER_HTML);
     });
 
@@ -381,6 +457,7 @@ export function startLauncher(open = true) {
     // each running engine. Local-first (this machine's registry) — the phone-home
     // layer for remote clients is a separate, later phase.
     app.get('/api/launcher/manager', async (_req, res) => {
+        if (!isOperator()) return res.status(404).json({ error: 'operator edition only' });
         const reg = loadRegistry();
         const customers: Record<string, any[]> = {};
         // Fleet-wide accumulators — the vendor rollup across every connectome that's up.
@@ -471,6 +548,7 @@ export function startLauncher(open = true) {
 
     // Assign a connectome to a customer.
     app.post('/api/launcher/owner', (req, res) => {
+        if (!isOperator()) return res.status(404).json({ error: 'operator edition only' });
         const { path: projectPath, owner } = req.body || {};
         const reg = loadRegistry();
         const proj = reg.projects.find(p => p.path === projectPath);
@@ -484,6 +562,7 @@ export function startLauncher(open = true) {
     // targets connectomes with no owner (the sweep-everything-under-my-name path). If `to`
     // already exists, the groups merge.
     app.post('/api/launcher/rename-owner', (req, res) => {
+        if (!isOperator()) return res.status(404).json({ error: 'operator edition only' });
         const { from, to } = req.body || {};
         const target = (typeof to === 'string') ? to.trim() : '';
         if (!target) return res.status(400).json({ error: 'a non-empty new name is required' });
@@ -502,6 +581,7 @@ export function startLauncher(open = true) {
     // remotely starts a client's engine: the client sees the offer when they open/start
     // their connectome and chooses accept (→updated) or later (→pushed).
     app.post('/api/launcher/update', (req, res) => {
+        if (!isOperator()) return res.status(404).json({ error: 'operator edition only' });
         const { path: projectPath } = req.body || {};
         const reg = loadRegistry();
         const proj = reg.projects.find(p => p.path === projectPath);
@@ -987,6 +1067,70 @@ export function startLauncher(open = true) {
         res.status(r.status).json(r.body);
     });
 
+    // ─── License & fleet (user edition) ─────────────────────────────────────
+    // Activation, heartbeat, support, feedback, update feed. Everything crosses
+    // through the launcher so the license token never reaches the browser and
+    // the lawful-minimum promise is enforced in exactly one place.
+    app.get('/api/launcher/license/status', (_req, res) => {
+        const ls: any = licenseState();
+        const out: any = { state: ls.state };
+        if (ls.state === 'grace') out.days_left = ls.days_left;
+        if (ls.lic) { out.kind = ls.lic.kind; out.trial_ends = ls.lic.trial_ends || null; out.email = ls.lic.email; }
+        res.json(out);
+    });
+
+    app.post('/api/launcher/license/activate', async (req, res) => {
+        const { code, name, email, heard_from, marketing_ok, share_ai_ok, terms_accepted } = req.body || {};
+        if (!terms_accepted) return res.status(400).json({ error: 'the terms must be accepted first' });
+        if (!code || !email || !name) return res.status(400).json({ error: 'code, name and email are required' });
+        const r = await licenseActivate({
+            code: String(code).trim(), name: String(name).trim(), email: String(email).trim(),
+            heard_from: heard_from ? String(heard_from) : undefined,
+            marketing_ok: !!marketing_ok, share_ai_ok: !!share_ai_ok,
+        });
+        if (!r.ok) return res.status(400).json({ error: r.error });
+        res.json({ ok: true });
+    });
+
+    app.post('/api/launcher/license/recheck', async (_req, res) => {
+        const ls = await runHeartbeat();
+        res.json({ state: ls.state });
+    });
+
+    app.post('/api/launcher/support', async (req, res) => {
+        const { subject, body, include_log } = req.body || {};
+        if (!body || !String(body).trim()) return res.status(400).json({ error: 'a message is required' });
+        const lic = readLicense();
+        const payload: any = {
+            token: lic?.token || null, email: lic?.email || null,
+            subject: String(subject || 'Support').slice(0, 200), body: String(body).slice(0, 8000),
+        };
+        if (include_log) payload.log_excerpt = recentLogExcerpt();
+        const r = await fleetPost('/api/plexus/support', payload, 12000);
+        if (r?.error) return res.status(502).json({ error: r.error });
+        res.json({ ok: true, id: r.id || null });
+    });
+
+    app.post('/api/launcher/feedback', async (req, res) => {
+        const { type, body } = req.body || {};
+        if (!body || !String(body).trim()) return res.status(400).json({ error: 'some feedback text is required' });
+        const lic = readLicense();
+        const r = await fleetPost('/api/plexus/feedback', {
+            token: lic?.token || null, source: 'human',
+            type: String(type || 'idea'), body: String(body).slice(0, 8000),
+        }, 12000);
+        if (r?.error) return res.status(502).json({ error: r.error });
+        res.json({ ok: true, id: r.id || null });
+    });
+
+    app.get('/api/launcher/update-check', async (_req, res) => {
+        const cur = vendorBuild();
+        const r = await fleetGet('/api/plexus/updates/latest', 6000);
+        if (r?.error || !r?.version) return res.json({ current: cur.version, available: null });
+        const newer = String(r.version) !== String(cur.version);
+        res.json({ current: cur.version, available: newer ? { version: r.version, notes: r.notes || [], url: r.url || null } : null });
+    });
+
     app.listen(LAUNCHER_PORT, '127.0.0.1', () => {
         console.log(`⬡ Plexus Launcher → http://localhost:${LAUNCHER_PORT}`);
         // First-launch home for new projects: make the default base REAL from minute one
@@ -998,6 +1142,12 @@ export function startLauncher(open = true) {
             if (!lastBase || lastBase === defBase) fs.mkdirSync(defBase, { recursive: true });
         } catch { /* best-effort */ }
         setTimeout(() => { detectClients().catch(() => { /* prewarm only */ }); }, 300);
+        // User edition phones home on boot + every 12h — license check with 14-day
+        // offline grace, plus the consented AI-feedback forward. Operator never does.
+        if (!isOperator()) {
+            setTimeout(() => { runHeartbeat().catch(() => { /* offline is fine */ }); }, 1500);
+            setInterval(() => { runHeartbeat().catch(() => { /* offline is fine */ }); }, 12 * 3600 * 1000);
+        }
         if (open && !process.env.PLEXUS_NO_OPEN) {
             try { require('open')(`http://localhost:${LAUNCHER_PORT}`); } catch { /* headless */ }
         }

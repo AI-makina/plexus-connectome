@@ -62,6 +62,14 @@ export function registryBases(): string[] {
 
 /** Register a project (idempotent by path) and assign it unique ports. */
 export function registerProject(projectPath: string, name: string, kind: 'genesis' | 'connected'): ProjectEntry {
+    // Protection invariant: Plexus never registers its own install location (or
+    // anything inside it) as a project. A registered project gets AI plugs wired
+    // into its folder — our own product must never invite an AI into its code.
+    const appRoot = path.resolve(__dirname, '..', '..');
+    const target = path.resolve(projectPath);
+    if (target === appRoot || target.startsWith(appRoot + path.sep) || appRoot.startsWith(target + path.sep)) {
+        throw new Error('This folder is part of the Plexus app itself — it can\'t be a Plexus project. Pick a folder outside the app.');
+    }
     const reg = loadRegistry();
     const existing = reg.projects.find(p => p.path === projectPath);
     if (existing) return existing;

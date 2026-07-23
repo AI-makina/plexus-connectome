@@ -1,6 +1,6 @@
 {
   "name": "plexus",
-  "version": "1.0.86",
+  "version": "1.0.88",
   "description": "Plexus Neural Connectome Engine",
   "main": "dist/index.js",
   "bin": {
@@ -20,6 +20,7 @@
   "dependencies": {
     "better-sqlite3": "^12.6.2",
     "body-parser": "^2.2.2",
+    "bytenode": "^1.6.0",
     "chokidar": "^5.0.0",
     "commander": "^14.0.3",
     "cors": "^2.8.6",

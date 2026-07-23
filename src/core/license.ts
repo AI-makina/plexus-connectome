@@ -103,7 +103,7 @@ export async function activate(input: {
 
 /** One heartbeat. Counts are handed in by the caller (launcher) so this module
  *  stays free of registry imports. Fire-and-forget safe. */
-export async function heartbeat(counts: { connectomes: number; engines: string[] }): Promise<LicenseState> {
+export async function heartbeat(counts: { connectomes: number; engines: string[]; integrity_ok?: boolean }): Promise<LicenseState> {
     if (isOperator()) return { state: 'operator' };
     const lic = readLicense();
     if (!lic?.token) return { state: 'unactivated' };
@@ -113,6 +113,7 @@ export async function heartbeat(counts: { connectomes: number; engines: string[]
         platform: process.platform,
         connectomes: counts.connectomes,
         engines: counts.engines.slice(0, 12),
+        integrity_ok: counts.integrity_ok !== false,
     });
     if (r?.offline) return licenseState(); // network failure → grace math decides
     if (r?.status) {

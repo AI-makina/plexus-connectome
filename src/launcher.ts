@@ -8,6 +8,7 @@ import { LAUNCHER_HTML } from './launcherPage';
 import { MANAGER_HTML } from './managerPage';
 import { ACTIVATION_HTML } from './activationPage';
 import { isOperator } from './core/edition';
+import { verifyIntegrity } from './core/integrity';
 import { licenseState, activate as licenseActivate, heartbeat as licenseHeartbeat, readLicense, saveLicense } from './core/license';
 import { fleetPost, fleetGet } from './core/fleet';
 
@@ -293,7 +294,8 @@ function recentLogExcerpt(): string {
 async function runHeartbeat() {
     let connectomes = 0;
     try { connectomes = loadRegistry().projects.length; } catch { /* fresh install */ }
-    const ls = await licenseHeartbeat({ connectomes, engines: [] });
+    const integrity = verifyIntegrity();
+    const ls = await licenseHeartbeat({ connectomes, engines: [], integrity_ok: integrity.ok });
     forwardAiFeedback().catch(() => { /* best-effort */ });
     return ls;
 }

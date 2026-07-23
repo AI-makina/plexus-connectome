@@ -15,3 +15,6 @@ plexus-integration/
 
 # Build-baked edition marker (operator/user) — written by scripts/edition.js
 edition.json
+
+# Packaged artifacts (built by scripts/package.js) — never committed
+build/

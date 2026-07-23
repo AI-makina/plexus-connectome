@@ -367,13 +367,22 @@ export function startLauncher(open = true) {
         res.set('Content-Type', 'text/html').send(html);
     });
 
-    // Plexus License Agreement (linked from activation + burger). Plain, readable.
-    app.get('/legal', (_req, res) => {
-        try {
-            const md = fs.readFileSync(path.join(__dirname, '..', 'docs', 'PLEXUS_EULA.md'), 'utf8');
-            const esc = md.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-            res.set('Content-Type', 'text/html').send('<!doctype html><html><head><meta charset="utf-8"><title>Plexus License Agreement</title><style>body{background:#07060E;color:#D6D2E8;font:14px/1.7 -apple-system,sans-serif;max-width:760px;margin:40px auto;padding:0 22px;white-space:pre-wrap}</style></head><body>' + esc + '</body></html>');
-        } catch { res.status(404).send('license text not found'); }
+    // Plexus License Agreement (linked from activation + burger + re-consent).
+    // The fleet's current published version is authoritative — updated terms
+    // reach every install without an app update; the bundled copy is the
+    // offline fallback.
+    app.get('/legal', async (_req, res) => {
+        let text = ''; let heading = '';
+        const r = await fleetGet('/api/plexus/legal/current', 5000);
+        if (r?.content) {
+            text = String(r.content);
+            heading = `Version ${r.version}` + (r.published_at ? ` · published ${String(r.published_at).slice(0, 10)}` : '') + '\n\n';
+        } else {
+            try { text = fs.readFileSync(path.join(__dirname, '..', 'docs', 'PLEXUS_EULA.md'), 'utf8'); }
+            catch { return res.status(404).send('license text not found'); }
+        }
+        const esc = (heading + text).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+        res.set('Content-Type', 'text/html').send('<!doctype html><html><head><meta charset="utf-8"><title>Plexus License Agreement</title><style>body{background:#07060E;color:#D6D2E8;font:14px/1.7 -apple-system,sans-serif;max-width:760px;margin:40px auto;padding:0 22px;white-space:pre-wrap}</style></head><body>' + esc + '</body></html>');
     });
 
     // What did Claude Code record about this project's .mcp.json question?
@@ -1075,8 +1084,25 @@ export function startLauncher(open = true) {
         const ls: any = licenseState();
         const out: any = { state: ls.state };
         if (ls.state === 'grace') out.days_left = ls.days_left;
-        if (ls.lic) { out.kind = ls.lic.kind; out.trial_ends = ls.lic.trial_ends || null; out.email = ls.lic.email; }
+        if (ls.lic) {
+            out.kind = ls.lic.kind; out.trial_ends = ls.lic.trial_ends || null; out.email = ls.lic.email;
+            out.legal_pending = !!ls.lic.legal_pending;
+            out.legal_version = ls.lic.legal_version || null;
+            out.legal_summary = ls.lic.legal_summary || null;
+        }
         res.json(out);
+    });
+
+    // §9 re-consent: record acceptance of the current terms version with the
+    // fleet, then clear the local pending flag.
+    app.post('/api/launcher/legal/accept', async (_req, res) => {
+        const lic = readLicense();
+        if (!lic?.token || !lic.legal_version) return res.status(400).json({ error: 'nothing pending' });
+        const r = await fleetPost('/api/plexus/legal/accept', { token: lic.token, version: lic.legal_version }, 12000);
+        if (r?.error) return res.status(502).json({ error: r.error });
+        lic.legal_pending = false;
+        saveLicense(lic);
+        res.json({ ok: true, accepted: lic.legal_version });
     });
 
     app.post('/api/launcher/license/activate', async (req, res) => {

@@ -30,6 +30,12 @@ export interface License {
     last_ok?: string;       // last successful heartbeat
     last_msg?: string;      // operator-facing message from the fleet (e.g. why inactive)
     ai_forwarded_until?: string; // AI-feedback forwarding high-water mark
+    // Legal re-consent (§9): current published terms version + whether this
+    // customer still needs to accept it. Set by the heartbeat.
+    legal_version?: number;
+    legal_pending?: boolean;
+    legal_title?: string;
+    legal_summary?: string | null;
 }
 
 export function readLicense(): License | null {
@@ -114,6 +120,12 @@ export async function heartbeat(counts: { connectomes: number; engines: string[]
         lic.kind = r.kind || lic.kind;
         lic.trial_ends = r.trial_ends ?? lic.trial_ends;
         lic.last_msg = r.message || undefined;
+        if (r.legal) {
+            lic.legal_version = r.legal.version;
+            lic.legal_pending = !!r.legal.pending;
+            lic.legal_title = r.legal.title || lic.legal_title;
+            lic.legal_summary = r.legal.summary ?? lic.legal_summary;
+        }
         if (lic.status === 'active') lic.last_ok = new Date().toISOString();
         saveLicense(lic);
     }

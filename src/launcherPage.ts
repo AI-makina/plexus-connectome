@@ -459,6 +459,24 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
     <div style="margin-top:8px;text-align:right"><button class="ghost" onclick="closeProblem()">close</button></div>
   </div>
 </div>
+
+<!-- ── UPDATED TERMS · re-consent (blocking; no outside-close by design) ── -->
+<div class="modal" id="terms-modal">
+  <div class="modal-card guide" style="max-width:470px">
+    <h3>Updated terms</h3>
+    <div class="g-sub">The Plexus License Agreement has been updated. Please review before continuing.</div>
+    <p style="font-size:13px;color:var(--mid);margin:8px 0" id="terms-summary"></p>
+    <p style="font-size:12.5px;margin:0 0 4px"><a class="golink" href="/legal" target="_blank" rel="noopener">View the full terms &#8599;</a></p>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin:12px 0;color:var(--mid);font-size:12.5px;cursor:pointer">
+      <input type="checkbox" id="terms-agree" style="margin-top:2px;accent-color:#A78BFA" onchange="document.getElementById('terms-confirm').disabled=!this.checked">
+      <span>I have read and accept the updated Terms &amp; License Agreement.</span>
+    </label>
+    <div style="display:flex;gap:10px;align-items:center">
+      <button class="primary" id="terms-confirm" disabled onclick="acceptTerms()">Confirm</button>
+      <span class="sup-ok" id="terms-note"></span>
+    </div>
+  </div>
+</div>
 <!--/USR-->
 
 <!-- ── LAUNCH GUIDE (burger menu) ── -->
@@ -823,9 +841,22 @@ function sendProblem(){
     .then(function(r){return r.json()}).then(function(j){ n.textContent = j&&j.ok ? 'report sent \\u2713 — thank you' : ((j&&j.error)||'could not send'); })
     .catch(function(){ n.textContent='could not send — check your connection'; });
 }
+function acceptTerms(){
+  var b=document.getElementById('terms-confirm'); var n=document.getElementById('terms-note');
+  b.disabled=true; n.textContent='recording…';
+  fetch('/api/launcher/legal/accept',{method:'POST'}).then(function(r){return r.json()}).then(function(j){
+    if(j&&j.ok){ n.textContent='accepted \\u2713'; setTimeout(function(){ document.getElementById('terms-modal').classList.remove('show'); },500); }
+    else { n.textContent=(j&&j.error)||'could not record — try again'; b.disabled=false; }
+  }).catch(function(){ n.textContent='no connection — try again'; b.disabled=false; });
+}
 (function licenseBoot(){
   var ln=document.getElementById('lic-note'); if(!ln) return; // operator build: elements stripped
   fetch('/api/launcher/license/status').then(function(r){return r.json()}).then(function(j){
+    if(j && j.legal_pending){
+      var s=document.getElementById('terms-summary');
+      if(s) s.textContent = j.legal_summary ? ('What changed: '+j.legal_summary) : 'A new version of the agreement is in effect.';
+      document.getElementById('terms-modal').classList.add('show');
+    }
     if(j && j.state==='grace'){ ln.className='licnote grace'; ln.innerHTML='<b>License check pending</b> — Plexus couldn\\u2019t reach the license service. Everything keeps working for <b>'+j.days_left+' more day'+(j.days_left===1?'':'s')+'</b>; one successful check clears this.'; }
     else if(j && j.kind==='trial' && j.trial_ends){
       var d=Math.ceil((new Date(j.trial_ends).getTime()-Date.now())/86400000);

@@ -21,9 +21,14 @@
 #
 # Configure identities here or via env (APP_ID / INSTALLER_ID / NOTARY_PROFILE):
 set -euo pipefail
-APP_ID="${APP_ID:-Developer ID Application: Skyfynd}"
-INSTALLER_ID="${INSTALLER_ID:-Developer ID Installer: Skyfynd}"
+# Auto-detect the installed Developer ID identities (override via env if needed).
+APP_ID="${APP_ID:-$(security find-identity -v -p codesigning | grep -o 'Developer ID Application: [^"]*' | head -1)}"
+INSTALLER_ID="${INSTALLER_ID:-$(security find-identity -v | grep -o 'Developer ID Installer: [^"]*' | head -1)}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-plexus-notary}"
+[ -n "$APP_ID" ] || { echo "✗ no Developer ID Application identity in keychain"; exit 1; }
+[ -n "$INSTALLER_ID" ] || { echo "✗ no Developer ID Installer identity in keychain"; exit 1; }
+echo "  app identity:       $APP_ID"
+echo "  installer identity: $INSTALLER_ID"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/build/Plexus.app"

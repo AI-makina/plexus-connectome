@@ -31,24 +31,48 @@ echo "  app identity:       $APP_ID"
 echo "  installer identity: $INSTALLER_ID"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$ROOT/build/Plexus.app"
+# Must match package.js: build/sign OUTSIDE any iCloud-synced folder, or sync
+# re-stamps FinderInfo mid-sign and breaks verification/notarization.
+BUILD="${PLEXUS_BUILD_DIR:-${TMPDIR:-/tmp}/plexus-build}"
+BUILD="${BUILD%/}"
+APP="$BUILD/Plexus.app"
 ENT="$ROOT/packaging/entitlements.plist"
 VERSION="$(node -p "require('$ROOT/package.json').version")"
-PKG="$ROOT/build/Plexus-$VERSION.pkg"
-COMPONENT="$ROOT/build/Plexus-component.pkg"
+PKG="$BUILD/Plexus-$VERSION.pkg"
+COMPONENT="$BUILD/Plexus-component.pkg"
 
 [ -d "$APP" ] || { echo "✗ $APP not found — run: node scripts/package.js"; exit 1; }
+case "$APP" in
+  "$HOME"/Desktop/*|"$HOME"/Documents/*)
+    echo "✗ $APP is under an iCloud-synced folder — sign from a temp dir (unset PLEXUS_BUILD_DIR)."; exit 1;;
+esac
 echo "⬡ Signing Plexus $VERSION"
+
+# 0. Strip Finder metadata / extended attributes / resource forks — codesign
+#    refuses to seal a bundle that carries any ("resource fork … not allowed").
+echo "  · cleaning bundle metadata…"
+xattr -cr "$APP"
+find "$APP" \( -name '.DS_Store' -o -name '._*' \) -delete 2>/dev/null || true
 
 # 1. Sign inside-out: every Mach-O (native .node addons, dylibs, the bundled node),
 #    then the app itself, all under the hardened runtime with Node's entitlements.
+#    Candidates are filtered through `file` so a stray non-binary named "node"
+#    (e.g. pdf-parse/dist/node/) is skipped, not fed to codesign.
 echo "  · signing nested binaries…"
-while IFS= read -r -d '' f; do
+{
+  echo "$APP/Contents/Resources/node"
+  find "$APP/Contents/Resources/app" -type f \( -name '*.node' -o -name '*.dylib' -o -name '*.so' \)
+} | while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  file "$f" | grep -q 'Mach-O' || continue
   codesign --force --timestamp --options runtime --entitlements "$ENT" --sign "$APP_ID" "$f"
-done < <(find "$APP/Contents/Resources" \( -name '*.node' -o -name '*.dylib' -o -name 'node' \) -print0)
+done
 
 echo "  · signing Plexus.app…"
 codesign --force --timestamp --options runtime --entitlements "$ENT" --sign "$APP_ID" "$APP"
+# codesign on Sequoia can leave a FinderInfo xattr on the bundle root; it is not
+# part of the seal, so strip it before --strict verification.
+xattr -d com.apple.FinderInfo "$APP" 2>/dev/null || true
 codesign --verify --deep --strict --verbose=2 "$APP"
 echo "  ✓ app signature valid"
 

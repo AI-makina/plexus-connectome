@@ -30,7 +30,11 @@ const crypto = require('crypto');
 const { execFileSync, execSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
-const BUILD = path.join(ROOT, 'build');
+// Build OUTSIDE any iCloud-synced folder (e.g. ~/Desktop). Sync re-stamps
+// com.apple.FinderInfo/provenance onto files faster than codesign finishes,
+// which breaks --strict verification and notarization. Override with
+// PLEXUS_BUILD_DIR. Default: a stable temp dir keyed to the app.
+const BUILD = process.env.PLEXUS_BUILD_DIR || path.join(os.tmpdir(), 'plexus-build');
 const APP = path.join(BUILD, 'Plexus.app');
 const CONTENTS = path.join(APP, 'Contents');
 const MACOS = path.join(CONTENTS, 'MacOS');

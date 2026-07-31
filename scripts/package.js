@@ -212,6 +212,11 @@ fs.writeFileSync(path.join(CONTENTS, 'Info.plist'),
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <!-- Plexus is a local server that opens the browser — it has no Cocoa window.
+       LSUIElement makes it an agent app so macOS doesn't bounce the dock icon
+       forever waiting for a window-server connection that never comes (which
+       read as "launches but never opens"). It still launches + opens the browser. -->
+  <key>LSUIElement</key><true/>
 </dict></plist>
 `);
 fs.writeFileSync(path.join(CONTENTS, 'PkgInfo'), 'APPL????');

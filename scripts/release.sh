@@ -43,7 +43,12 @@ PKG="$BUILD/Plexus-$VERSION.pkg"
 #    simulator and the real bucket stays empty → public 404).
 echo "▸ uploading to R2 (remote)…"
 cd "$OMI_DIR"
-set -a; source <(grep -E '^CLOUDFLARE_(API_TOKEN|ACCOUNT_ID)=' .env.local); set +a
+# Export the Cloudflare token explicitly — process-substitution sourcing
+# (source <(grep ...)) didn't survive set -e reliably here, leaving wrangler
+# to fall back to an expired OAuth login.
+export CLOUDFLARE_API_TOKEN="$(grep -E '^CLOUDFLARE_API_TOKEN=' .env.local | head -1 | cut -d= -f2-)"
+export CLOUDFLARE_ACCOUNT_ID="$(grep -E '^CLOUDFLARE_ACCOUNT_ID=' .env.local | head -1 | cut -d= -f2-)"
+[ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "✗ CLOUDFLARE_API_TOKEN not found in $OMI_DIR/.env.local"; exit 1; }
 npx wrangler r2 object put "$BUCKET/plexus/Plexus-$VERSION.pkg" \
   --file "$PKG" --content-type application/octet-stream --remote
 # verify it actually serves before repointing anything

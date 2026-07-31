@@ -148,7 +148,14 @@ function doActivate(){
     code:el('code').value.trim(), name:el('name').value.trim(), email:el('email').value.trim(),
     heard_from:el('heard').value, marketing_ok:el('mkt').checked, share_ai_ok:el('shareai').checked, terms_accepted:true
   })}).then(function(r){return r.json()}).then(function(j){
-    if(j&&j.ok){ b.textContent='welcome to Plexus ✓'; setTimeout(function(){location.href='/'},700) }
+    if(j&&j.ok){
+      var msg='welcome to Plexus ✓';
+      if(j.kind==='trial' && j.trial_ends){
+        var d=Math.max(1,Math.ceil((new Date(j.trial_ends).getTime()-Date.now())/86400000));
+        msg='your '+d+'-day free trial has started ✓';
+      }
+      b.textContent=msg; setTimeout(function(){location.href='/'},1200);
+    }
     else{ el('e-act').textContent=(j&&j.error)||'activation failed — check the code and try again'; b.disabled=false; b.textContent='Activate Plexus' }
   }).catch(function(){ el('e-act').textContent='could not reach the activation service — check your connection'; b.disabled=false; b.textContent='Activate Plexus' });
 }

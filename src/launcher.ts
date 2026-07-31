@@ -1117,7 +1117,7 @@ export function startLauncher(open = true) {
             marketing_ok: !!marketing_ok, share_ai_ok: !!share_ai_ok,
         });
         if (!r.ok) return res.status(400).json({ error: r.error });
-        res.json({ ok: true });
+        res.json({ ok: true, kind: r.lic?.kind || null, trial_ends: r.lic?.trial_ends || null });
     });
 
     app.post('/api/launcher/license/recheck', async (_req, res) => {

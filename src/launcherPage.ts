@@ -860,7 +860,7 @@ function acceptTerms(){
     if(j && j.state==='grace'){ ln.className='licnote grace'; ln.innerHTML='<b>License check pending</b> — Plexus couldn\\u2019t reach the license service. Everything keeps working for <b>'+j.days_left+' more day'+(j.days_left===1?'':'s')+'</b>; one successful check clears this.'; }
     else if(j && j.kind==='trial' && j.trial_ends){
       var d=Math.ceil((new Date(j.trial_ends).getTime()-Date.now())/86400000);
-      if(d>0 && d<=15){ ln.className='licnote grace'; ln.innerHTML='<b>Trial</b> — '+d+' day'+(d===1?'':'s')+' left. Your projects and brains are yours either way.'; }
+      if(d>0){ ln.className='licnote grace'; ln.innerHTML='<b>Free trial</b> · <b>'+d+' day'+(d===1?'':'s')+'</b> left'+(d<=3?' — ending soon':'')+'. When it ends you can keep going anytime; your projects and brains stay on your computer.'; }
     }
   }).catch(function(){});
   var un=document.getElementById('upd-note'); if(!un) return;

@@ -98,34 +98,49 @@ sh('npm install --omit=dev --no-audit --no-fund --ignore-scripts=false', {
 const nmSize = execSync(`du -sh "${path.join(APPDIR, 'node_modules')}" | cut -f1`).toString().trim();
 log(`node_modules: ${nmSize}`);
 
-// ── 4. Bytecode-compile our dist ─────────────────────────────────────────────
-log('compiling our code to V8 bytecode…');
-const bytenode = require(path.join(APPDIR, 'node_modules', 'bytenode'));
+// ── 4. (Optional) bytecode-compile our dist ──────────────────────────────────
+// V8 bytecode (.jsc) is REJECTED at load under the macOS hardened runtime when
+// the app is launched by LaunchServices (double-click): V8's cached-data flag
+// fingerprint under the hardened runtime differs from the build-time context, so
+// bytenode throws `cachedDataRejected` and Node dies on the first require —
+// invisibly (no window, no dock icon, no crash log). It loads fine from a shell,
+// which masked the bug in testing. You cannot compile the bytecode inside the
+// hardened-runtime context, so until a compatible path is proven (and tested
+// through actual LaunchServices, not a shell) we ship plain JS so the app
+// launches. The integrity manifest + tamper check below still apply. Re-enable
+// the obfuscation layer with PLEXUS_BYTECODE=1 once it's solved.
+const USE_BYTECODE = process.env.PLEXUS_BYTECODE === '1';
 const distDir = path.join(APPDIR, 'dist');
-const jsFiles = walk(distDir).filter((f) => f.endsWith('.js'));
-let compiled = 0;
-for (const js of jsFiles) {
-    const src = fs.readFileSync(js, 'utf8');
-    const hadShebang = src.startsWith('#!');
-    const jsc = js + 'c'; // foo.js → foo.jsc
-    // compileFile wraps in the CommonJS module wrapper (exports/require/__dirname),
-    // which compileCode does not — so a bytecode module can be require()d.
-    if (hadShebang) {
-        const tmp = js + '.nb.js';
-        fs.writeFileSync(tmp, src.replace(/^#![^\n]*\n/, ''));
-        bytenode.compileFile({ filename: tmp, output: jsc });
-        fs.rmSync(tmp);
-    } else {
-        bytenode.compileFile({ filename: js, output: jsc });
+const bytenode = USE_BYTECODE ? require(path.join(APPDIR, 'node_modules', 'bytenode')) : null;
+if (USE_BYTECODE) {
+    log('compiling our code to V8 bytecode…');
+    const jsFiles = walk(distDir).filter((f) => f.endsWith('.js'));
+    let compiled = 0;
+    for (const js of jsFiles) {
+        const src = fs.readFileSync(js, 'utf8');
+        const hadShebang = src.startsWith('#!');
+        const jsc = js + 'c'; // foo.js → foo.jsc
+        // compileFile wraps in the CommonJS module wrapper (exports/require/__dirname),
+        // which compileCode does not — so a bytecode module can be require()d.
+        if (hadShebang) {
+            const tmp = js + '.nb.js';
+            fs.writeFileSync(tmp, src.replace(/^#![^\n]*\n/, ''));
+            bytenode.compileFile({ filename: tmp, output: jsc });
+            fs.rmSync(tmp);
+        } else {
+            bytenode.compileFile({ filename: js, output: jsc });
+        }
+        const base = path.basename(jsc);
+        const stub = (hadShebang ? '#!/usr/bin/env node\n' : '') +
+            `require('bytenode');module.exports=require('./${base}');\n`;
+        fs.writeFileSync(js, stub);
+        if (hadShebang) fs.chmodSync(js, 0o755);
+        compiled++;
     }
-    const base = path.basename(jsc);
-    const stub = (hadShebang ? '#!/usr/bin/env node\n' : '') +
-        `require('bytenode');module.exports=require('./${base}');\n`;
-    fs.writeFileSync(js, stub);
-    if (hadShebang) fs.chmodSync(js, 0o755);
-    compiled++;
+    log(`${compiled} modules → bytecode`);
+} else {
+    log('shipping plain JS (V8 bytecode disabled — incompatible with the hardened runtime under LaunchServices)');
 }
-log(`${compiled} modules → bytecode`);
 
 // ── 5. Integrity manifest + baked constants ──────────────────────────────────
 log('sealing integrity manifest…');
@@ -155,12 +170,17 @@ const integritySrcJs = path.join(distDir, 'core', 'integrity.js'); // currently 
 const freshIntegrity = fs.readFileSync(path.join(ROOT, 'dist', 'core', 'integrity.js'), 'utf8')
     .replace('__PLEXUS_INTEGRITY_ROOT__', root)
     .replace('__PLEXUS_INTEGRITY_SALT__', salt);
-const jscOut = path.join(distDir, 'core', 'integrity.jsc');
-const bakeTmp = path.join(distDir, 'core', 'integrity.bake.js');
-fs.writeFileSync(bakeTmp, freshIntegrity);
-bytenode.compileFile({ filename: bakeTmp, output: jscOut });
-fs.rmSync(bakeTmp);
-fs.writeFileSync(integritySrcJs, `require('bytenode');module.exports=require('./integrity.jsc');\n`);
+if (USE_BYTECODE) {
+    const jscOut = path.join(distDir, 'core', 'integrity.jsc');
+    const bakeTmp = path.join(distDir, 'core', 'integrity.bake.js');
+    fs.writeFileSync(bakeTmp, freshIntegrity);
+    bytenode.compileFile({ filename: bakeTmp, output: jscOut });
+    fs.rmSync(bakeTmp);
+    fs.writeFileSync(integritySrcJs, `require('bytenode');module.exports=require('./integrity.jsc');\n`);
+} else {
+    // Plain-JS mode: the baked integrity module ships as real (constant-substituted) source.
+    fs.writeFileSync(integritySrcJs, freshIntegrity);
+}
 log(`manifest sealed over ${codeFiles.length} files`);
 
 // ── 6. Bundle the Node runtime ───────────────────────────────────────────────

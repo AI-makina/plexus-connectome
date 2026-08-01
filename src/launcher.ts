@@ -1159,7 +1159,7 @@ export function startLauncher(open = true) {
         res.json({ current: cur.version, available: newer ? { version: r.version, notes: r.notes || [], url: r.url || null } : null });
     });
 
-    app.listen(LAUNCHER_PORT, '127.0.0.1', () => {
+    const server = app.listen(LAUNCHER_PORT, '127.0.0.1', () => {
         console.log(`⬡ Plexus Launcher → http://localhost:${LAUNCHER_PORT}`);
         // First-launch home for new projects: make the default base REAL from minute one
         // (visible in Finder), like any app-store app on first run. Skipped once the user
@@ -1187,5 +1187,21 @@ export function startLauncher(open = true) {
             const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
             try { spawn(opener, [url], { detached: true, stdio: 'ignore' }).unref(); } catch { /* headless */ }
         }
+    });
+    server.on('error', (err: any) => {
+        // Usually EADDRINUSE: Plexus is already running (the app was clicked again,
+        // or a previous build's background instance is still up on this port). Don't
+        // crash silently — open the running instance's UI in the browser and exit
+        // cleanly, so a second click "opens Plexus" instead of appearing dead.
+        if (err && err.code === 'EADDRINUSE') {
+            if (open && !process.env.PLEXUS_NO_OPEN) {
+                const url = `http://localhost:${LAUNCHER_PORT}`;
+                const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+                try { spawn(opener, [url], { detached: true, stdio: 'ignore' }).unref(); } catch { /* headless */ }
+            }
+            process.exit(0);
+        }
+        console.error('Plexus launcher failed to start:', (err && err.message) || err);
+        process.exit(1);
     });
 }

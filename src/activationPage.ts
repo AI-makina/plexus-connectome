@@ -101,7 +101,8 @@ export const ACTIVATION_HTML = `<!doctype html>
     <label>Your name</label><input type="text" id="name" autocomplete="name">
     <label>Email</label><input type="email" id="email" autocomplete="email" placeholder="the address your invitation was sent to">
     <label>Where did you hear about Plexus? <span style="color:var(--ghost);font-weight:400">(optional)</span></label>
-    <select id="heard"><option value="">—</option><option>A friend or coworker</option><option>Skyfynd</option><option>Social media</option><option>Search</option><option>Other</option></select>
+    <select id="heard" onchange="onHeard()"><option value="">—</option><option>A friend or coworker</option><option>Skyfynd</option><option>Social media</option><option>Search</option><option>Other</option></select>
+    <input type="text" id="heard-other" class="hide" placeholder="Tell us where" maxlength="120" style="margin-top:8px">
     <label class="chk"><input type="checkbox" id="mkt"><span>Keep me posted about Plexus and Skyfynd apps (no spam, unsubscribe anytime).</span></label>
     <label class="chk"><input type="checkbox" id="shareai" checked><span>Share the AI questionnaire's product feedback with Skyfynd — product answers only, never your code or project content.</span></label>
     <div class="err" id="e-act"></div>
@@ -147,11 +148,13 @@ function checkCode(btn){
     }).catch(function(){ btn.disabled=false; btn.textContent=t; show('s-profile') }); // network hiccup → let Activate be the gate
 }
 el('agree').addEventListener('change',function(){el('b-terms').disabled=!this.checked});
+function onHeard(){ var o=el('heard-other'); o.classList.toggle('hide', el('heard').value!=='Other'); if(el('heard').value==='Other') o.focus(); }
+function heardValue(){ var v=el('heard').value; return v==='Other' ? (el('heard-other').value.trim()||'Other') : v; }
 function doActivate(){
   var b=el('b-act'); b.disabled=true; b.textContent='activating…'; el('e-act').textContent='';
   fetch('/api/launcher/license/activate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
     code:el('code').value.trim(), name:el('name').value.trim(), email:el('email').value.trim(),
-    heard_from:el('heard').value, marketing_ok:el('mkt').checked, share_ai_ok:el('shareai').checked, terms_accepted:true
+    heard_from:heardValue(), marketing_ok:el('mkt').checked, share_ai_ok:el('shareai').checked, terms_accepted:true
   })}).then(function(r){return r.json()}).then(function(j){
     if(j&&j.ok){
       var msg='welcome to Plexus ✓';

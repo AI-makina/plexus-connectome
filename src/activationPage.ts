@@ -90,7 +90,7 @@ export const ACTIVATION_HTML = `<!doctype html>
     <p>Your invitation email contains a one-time code. It proves this copy of Plexus is yours.</p>
     <input type="text" class="code" id="code" maxlength="24" placeholder="XXXX-XXXX-XXXX" autocomplete="off">
     <div class="err" id="e-code"></div>
-    <button class="primary" onclick="toStep('profile')">Continue</button>
+    <button class="primary" onclick="checkCode(this)">Continue</button>
     <button class="ghost" onclick="toStep('terms')">back</button>
   </div>
 
@@ -134,12 +134,17 @@ export const ACTIVATION_HTML = `<!doctype html>
 var ST = __ACT_STATE__;
 function el(id){return document.getElementById(id)}
 function show(id){['s-terms','s-code','s-profile','s-inactive'].forEach(function(s){el(s).classList.add('hide')});el(id).classList.remove('hide')}
-function toStep(s){
-  if(s==='profile'){
-    var c=el('code').value.trim(); if(c.length<6){el('e-code').textContent='that code looks too short';return}
-    el('e-code').textContent='';
-  }
-  show('s-'+s);
+function toStep(s){ show('s-'+s); }
+function checkCode(btn){
+  var c=el('code').value.trim();
+  if(c.length<6){el('e-code').textContent='that code looks too short';return}
+  el('e-code').textContent=''; btn.disabled=true; var t=btn.textContent; btn.textContent='checking…';
+  fetch('/api/launcher/license/check-code',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:c})})
+    .then(function(r){return r.json()}).then(function(j){
+      btn.disabled=false; btn.textContent=t;
+      if(j&&j.valid){el('e-code').textContent='';show('s-profile')}
+      else{el('e-code').textContent=(j&&j.reason)||'that code was not recognized — check it against your invitation email'}
+    }).catch(function(){ btn.disabled=false; btn.textContent=t; show('s-profile') }); // network hiccup → let Activate be the gate
 }
 el('agree').addEventListener('change',function(){el('b-terms').disabled=!this.checked});
 function doActivate(){

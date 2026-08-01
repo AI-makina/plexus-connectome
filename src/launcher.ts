@@ -1120,6 +1120,19 @@ export function startLauncher(open = true) {
         res.json({ ok: true, kind: r.lic?.kind || null, trial_ends: r.lic?.trial_ends || null });
     });
 
+    // Fail-fast code check for the activation screen: reject a wrong code at the
+    // code step instead of letting it walk to the profile form. Read-only — it
+    // does NOT redeem. Email binding + single-use claim stay enforced at activate.
+    app.post('/api/launcher/license/check-code', async (req, res) => {
+        const code = String(req.body?.code || '').trim();
+        if (code.length < 6) return res.json({ valid: false, reason: 'that code looks too short' });
+        const r = await fleetPost('/api/plexus/invite/verify', { code }, 8000);
+        // Offline / service error: don't block on a network hiccup — the final
+        // Activate is the hard gate (and can't succeed offline anyway).
+        if (!r || r.offline || r.error) return res.json({ valid: true, soft: true });
+        res.json({ valid: !!r.valid, reason: r.reason });
+    });
+
     app.post('/api/launcher/license/recheck', async (_req, res) => {
         const ls = await runHeartbeat();
         res.json({ state: ls.state });

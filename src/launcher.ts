@@ -1177,7 +1177,15 @@ export function startLauncher(open = true) {
             setInterval(() => { runHeartbeat().catch(() => { /* offline is fine */ }); }, 12 * 3600 * 1000);
         }
         if (open && !process.env.PLEXUS_NO_OPEN) {
-            try { require('open')(`http://localhost:${LAUNCHER_PORT}`); } catch { /* headless */ }
+            // Open the default browser to the launcher. We spawn the OS opener
+            // directly (like project-open does above) rather than the `open` npm
+            // package: `open` is now ESM-only, so under the bundled Node
+            // `require('open')` returns a non-callable namespace object and calling
+            // it throws — which the old catch swallowed, leaving the app running
+            // headless with no window. That was the "double-click does nothing" bug.
+            const url = `http://localhost:${LAUNCHER_PORT}`;
+            const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+            try { spawn(opener, [url], { detached: true, stdio: 'ignore' }).unref(); } catch { /* headless */ }
         }
     });
 }

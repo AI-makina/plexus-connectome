@@ -81,8 +81,29 @@ echo "  · building installer…"
 rm -f "$COMPONENT" "$PKG"
 pkgbuild --root "$APP" --install-location "/Applications/Plexus.app" \
   --identifier io.skyfynd.plexus --version "$VERSION" "$COMPONENT"
-productbuild --sign "$INSTALLER_ID" --package "$COMPONENT" "$PKG"
-rm -f "$COMPONENT"
+# Present a click-through License Agreement (Agree / Disagree) during install,
+# straight from the canonical EULA. This is the upfront legal gate in the
+# installer itself; the binding, per-customer acceptance is still recorded
+# in-app at activation (step 1), tied to the customer + terms version.
+PKGRES="$BUILD/pkg-resources"
+DIST="$BUILD/distribution.xml"
+rm -rf "$PKGRES"; mkdir -p "$PKGRES"
+cp "$ROOT/docs/PLEXUS_EULA.md" "$PKGRES/license.txt"
+cat > "$DIST" <<XML
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="1">
+    <title>Plexus</title>
+    <license file="license.txt" mime-type="text/plain"/>
+    <options customize="never" require-scripts="false"/>
+    <choices-outline><line choice="default"><line choice="io.skyfynd.plexus"/></line></choices-outline>
+    <choice id="default"/>
+    <choice id="io.skyfynd.plexus" visible="false"><pkg-ref id="io.skyfynd.plexus"/></choice>
+    <pkg-ref id="io.skyfynd.plexus" version="$VERSION" onConclusion="none">Plexus-component.pkg</pkg-ref>
+</installer-gui-script>
+XML
+productbuild --distribution "$DIST" --resources "$PKGRES" --package-path "$BUILD" \
+  --sign "$INSTALLER_ID" "$PKG"
+rm -f "$COMPONENT" "$DIST"; rm -rf "$PKGRES"
 echo "  ✓ $PKG"
 
 # 3. Notarize (Apple scans + returns a ticket) and staple it into the installer,

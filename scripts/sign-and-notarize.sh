@@ -79,7 +79,8 @@ echo "  ✓ app signature valid"
 # 2. Build the installer and sign it with the Installer identity.
 echo "  · building installer…"
 rm -f "$COMPONENT" "$PKG"
-pkgbuild --root "$APP" --install-location "/Applications/Plexus.app" \
+pkgbuild --root "$APP" --scripts "$ROOT/packaging/pkg-scripts" \
+  --install-location "/Applications/Plexus.app" \
   --identifier io.skyfynd.plexus --version "$VERSION" "$COMPONENT"
 # Present a click-through License Agreement (Agree / Disagree) during install,
 # straight from the canonical EULA. This is the upfront legal gate in the

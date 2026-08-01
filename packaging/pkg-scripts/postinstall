@@ -1,0 +1,13 @@
+#!/bin/bash
+# Plexus installer — postinstall
+# ------------------------------------------------------------------------------
+# Stop any already-running Plexus instance so the version we just installed can
+# bind its port on the next launch. Plexus runs as a windowless background
+# server; installing new files does NOT stop a running old process, so without
+# this the old instance keeps holding localhost:3199 and the new one appears
+# "not to open" (it hits EADDRINUSE). Matching on 'Plexus.app/Contents' targets
+# only the app bundle's own launcher + bundled-node process — never a developer's
+# source-tree instance or the installer itself. Best-effort: never fail the
+# install over this (exit 0 regardless).
+/usr/bin/pkill -f 'Plexus.app/Contents' 2>/dev/null || true
+exit 0

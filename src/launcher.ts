@@ -172,11 +172,18 @@ function adoptUserPath(): void {
         .join(':').split(':').filter(p => p && !seen.has(p) && (seen.add(p), true)).join(':');
 }
 
-// Is a command on PATH? (detect installed AI clients / editors)
-function onPath(cmd: string): boolean {
-    try { return !!execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { encoding: 'utf8' }).split('\n')[0].trim(); }
-    catch { return false; }
+// Absolute path of a command (via which/where), or null — resolved against the
+// PATH adopted by adoptUserPath(), so it finds CLIs in ~/.local/bin etc. The
+// absolute path is what we bake into the editor's auto-start task, because that
+// task runs under a login shell that may NOT carry the user's full PATH (VS Code
+// runs it as `zsh -l -c <cmd>`, which skips ~/.zshrc) — a bare `claude` there
+// fails with "command not found" even when claude is installed.
+function whichPath(cmd: string): string | null {
+    try { return execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { encoding: 'utf8' }).split('\n')[0].trim() || null; }
+    catch { return null; }
 }
+// Is a command on PATH? (detect installed AI clients / editors)
+function onPath(cmd: string): boolean { return !!whichPath(cmd); }
 
 // AI clients Plexus can help connect / open a project in. openBin = its CLI to open a
 // folder (null = no folder CLI); app = macOS bundle (found even when the user never
@@ -1058,19 +1065,20 @@ export function startLauncher(open = true) {
             const wired = roster.id === 'codex' ? codexEnabled() : !!roster.project_wired;
             if (!roster.mcp || !wired) return { error: `${roster.label} cannot use the Plexus brain yet — pick a Plexus-ready AI or "none"` };
             if (!roster.bin || !onPath(roster.bin)) return { error: `${roster.label} is not installed on PATH` };
-            return { bin: roster.bin, label: roster.label };
+            return { bin: whichPath(roster.bin) || roster.bin, label: roster.label };
         }
         if (ai.startsWith('custom:')) {
             const c = (loadPrefs().custom_ais || []).find((x: any) => 'custom:' + x.bin === ai);
             if (!c) return { error: 'unknown custom AI — add it under Manage connections first' };
             if (!c.mcp) return { error: `${c.label || c.bin} is not marked MCP-capable — it cannot use the Plexus brain` };
             if (!onPath(c.bin)) return { error: `"${c.bin}" is not on PATH` };
-            return { bin: c.bin, label: c.label || c.bin };
+            return { bin: whichPath(c.bin) || c.bin, label: c.label || c.bin };
         }
         return { error: `unknown AI "${ai}"` };
     }
 
     function openProject(projectPath: string, client: string, ai: string): { status: number; body: any } {
+        adoptUserPath(); // resolve the real PATH before we look up + bake in the AI's binary
         const resumeCmd = `cd "${projectPath}"`;
         if (!fs.existsSync(projectPath)) return { status: 404, body: { error: 'folder not found' } };
         if (client === 'folder') { // reveal in Finder / Explorer

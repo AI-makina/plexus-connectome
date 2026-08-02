@@ -141,6 +141,37 @@ function codexEnabled(): boolean {
     return mcpConfigHasPlexus(CODEX_MCP_CONFIG) === true;
 }
 
+// GUI launch (Finder / LaunchServices) hands the app a minimal PATH — without
+// ~/.local/bin, Homebrew, or npm-global, which is exactly where AI CLIs like
+// `claude` and `codex` install. So `which claude` finds nothing even when it IS
+// installed (the "my AI isn't detected" bug). Resolve the user's REAL PATH once
+// — their login-shell PATH plus the well-known CLI bin dirs — and adopt it
+// process-wide, so detection AND every later spawn (`claude mcp list`, opening a
+// project) can find them. No-op after the first call; safe if the shell is slow
+// or restricted (the well-known dirs still apply).
+let PATH_ADOPTED = false;
+function adoptUserPath(): void {
+    if (PATH_ADOPTED || process.platform === 'win32') return;
+    PATH_ADOPTED = true;
+    const home = os.homedir();
+    const wellKnown = [
+        path.join(home, '.local', 'bin'), '/opt/homebrew/bin', '/opt/homebrew/sbin',
+        '/usr/local/bin', path.join(home, '.npm-global', 'bin'),
+        path.join(home, '.bun', 'bin'), path.join(home, '.cargo', 'bin'), path.join(home, 'bin'),
+    ];
+    let shellPath = '';
+    try {
+        const sh = process.env.SHELL || '/bin/zsh';
+        const out = execFileSync(sh, ['-ilc', 'printf "__PXP__%s__PXP__" "$PATH"'],
+            { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
+        const m = out.match(/__PXP__([\s\S]*?)__PXP__/);
+        shellPath = m ? m[1] : '';
+    } catch { /* headless / restricted shell — the well-known dirs still apply */ }
+    const seen = new Set<string>();
+    process.env.PATH = [process.env.PATH || '', shellPath, ...wellKnown]
+        .join(':').split(':').filter(p => p && !seen.has(p) && (seen.add(p), true)).join(':');
+}
+
 // Is a command on PATH? (detect installed AI clients / editors)
 function onPath(cmd: string): boolean {
     try { return !!execFileSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { encoding: 'utf8' }).split('\n')[0].trim(); }
@@ -233,6 +264,7 @@ function mcpConfigHasPlexus(file: string): boolean | undefined {
 // the wizard's connect step renders instantly.
 let clientsCache: { at: number; clients: any[] } | null = null;
 async function detectClients(force = false): Promise<any[]> {
+    adoptUserPath(); // find CLIs in ~/.local/bin, Homebrew, npm — not just the minimal Finder PATH
     if (!force && clientsCache && Date.now() - clientsCache.at < 60000) return clientsCache.clients;
     const clients = [];
     for (const c of AI_CLIENTS) {

@@ -1051,17 +1051,25 @@ function openHereButtons(p, noteId){
 function connectedNote(){
   return '<div class="hint" style="margin:4px 0 10px">✓ This project carries its own Plexus connection — open your AI inside its folder and it finds the brain automatically (it asks your permission once, the first time). Just talk about your app.</div>';
 }
-function loadConnections(){
+function loadConnections(force){
   // Status line only — the detected-tools rows appear on request.
   var head = document.getElementById('conn-head'), sub = document.getElementById('conn-sub');
   if(!head) return;
-  fetch('/api/launcher/clients').then(function(x){return x.json();}).then(function(r){
+  fetch('/api/launcher/clients'+(force?'?force=1':'')).then(function(x){return x.json();}).then(function(r){
     var inst = (r.clients||[]).filter(function(c){ return c.installed; });
     INSTALLED = inst;
     head.textContent = '⬡ Plexus connects per project';
-    sub.textContent = inst.length
-      ? 'Nothing to install — each project carries its own connection, and AIs opened anywhere else stay plexus-free. Detected on your computer: ' + inst.map(function(c){return c.label;}).join(', ') + '.'
-      : 'Nothing to install — each project carries its own connection. No AI tools detected on your computer yet.';
+    if(inst.length){
+      sub.innerHTML = 'Nothing to install — each project carries its own connection, and AIs opened anywhere else stay plexus-free. Detected on your computer: <b style="color:var(--ice)">' + inst.map(function(c){return esc(c.label);}).join(', ') + '</b>.';
+    } else {
+      // No AI on this computer yet — Plexus needs one to do anything, so guide a
+      // first-run user to install Claude Code (copy the command, run it, re-scan).
+      sub.innerHTML = 'Plexus works alongside an AI coding assistant, and none is installed on your computer yet. '
+        + '<b style="color:var(--ice)">Claude Code</b> is the quickest to add — paste this into a terminal, then hit '
+        + '<span class="golink" onclick="loadConnections(1)">search again</span>:'
+        + '<div class="cmd" onclick="copyText(this.textContent,this)">curl -fsSL https://claude.ai/install.sh | bash</div>'
+        + '<span style="color:var(--lo);font-size:11px">Have Node instead? <span class="mono" style="color:var(--mid)">npm install -g @anthropic-ai/claude-code</span></span>';
+    }
   }).catch(function(){ head.textContent='⬡ Plexus connects per project'; });
 }
 function openTools(){

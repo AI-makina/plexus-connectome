@@ -58,6 +58,31 @@ else
   echo "✗ uploaded but $DL_BASE/Plexus-$VERSION.pkg is not serving — aborting before repoint"; exit 1
 fi
 
+# 3b. Stage the release manifest (latest.json) beside the installer: version +
+#     url + the newest UPDATE_NOTES entry. The dashboard's Apps ▸ Updates tab
+#     prefills its Publish form from this — publishing itself stays the
+#     operator's click. Best-effort: a failure here never blocks the release.
+echo "▸ staging release manifest for the dashboard…"
+if VERSION="$VERSION" PLEXUS_DIR="$PLEXUS_DIR" DL_BASE="$DL_BASE" OUT="$BUILD/latest.json" node -e '
+const fs = require("fs");
+const v = process.env.VERSION;
+const top = (JSON.parse(fs.readFileSync(process.env.PLEXUS_DIR + "/UPDATE_NOTES.json", "utf8"))[0]) || {};
+fs.writeFileSync(process.env.OUT, JSON.stringify({
+  version: v,
+  url: process.env.DL_BASE + "/Plexus-" + v + ".pkg",
+  notes: top.notes || [],
+  title: top.title || null,
+  released_at: new Date().toISOString(),
+}, null, 2) + "\n");
+' \
+   && npx wrangler r2 object put "$BUCKET/plexus/latest.json" \
+        --file "$BUILD/latest.json" --content-type application/json --remote \
+   && curl -sf "$DL_BASE/latest.json" >/dev/null; then
+  echo "  ✓ manifest staged — the Publish form arrives prefilled"
+else
+  echo "  (manifest staging failed — the Publish form will just be blank; release continues)"
+fi
+
 # 4. Repoint the dashboard's download link at the new version + redeploy.
 echo "▸ repointing download URL + redeploying dashboard…"
 sed -i '' -E "s#(NEXT_PUBLIC_PLEXUS_DOWNLOAD_URL\": \"$DL_BASE/)Plexus-[0-9.]+\.pkg#\1Plexus-$VERSION.pkg#" wrangler.jsonc

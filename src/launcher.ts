@@ -28,7 +28,7 @@ const LAUNCHER_PORT = parseInt(process.env.PLEXUS_LAUNCHER_PORT || '', 10) || 31
 const CLI = path.join(__dirname, 'cli.js');
 
 import { loadRegistry, saveRegistry, patchManifestPorts, backupRegistry } from './core/registry';
-import { writeProjectMcpJson, writeProjectPlugs, writeProjectTask, writeProjectEditorSettings, workCommand } from './core/clientConfig';
+import { writeProjectMcpJson, writeProjectPlugs, writeProjectTask, writeProjectEditorSettings, workCommand, preflightClaudeSettings } from './core/clientConfig';
 
 function runCli(args: string[], cwd?: string): string {
     return execFileSync(process.execPath, [CLI, ...args], {
@@ -1088,6 +1088,16 @@ export function startLauncher(open = true) {
         }
         const resolved = resolveAi(ai);
         if (resolved && 'error' in resolved) return { status: 400, body: { error: resolved.error } };
+        // Self-heal Claude settings BEFORE the window opens, so the auto-started
+        // session loads clean files instead of dying on Claude's settings-error
+        // prompt (and silently losing that file's saved approvals).
+        const heal = preflightClaudeSettings(projectPath);
+        const healNotes: string[] = [];
+        if (heal.repaired.length) {
+            const n = heal.repaired.reduce((s, r) => s + r.fixed, 0);
+            healNotes.push(`Repaired ${n} outdated Claude permission rule${n === 1 ? '' : 's'} so Claude starts clean (original kept beside each file).`);
+        }
+        for (const b of heal.broken) healNotes.push(`Heads-up: ${b.file} is not valid JSON — Claude ignores that file (and any approvals saved in it) until it is fixed.`);
         const task = writeProjectTask(projectPath, resolved ? resolved.bin : null, resolved ? resolved.label : undefined);
         writeProjectEditorSettings(projectPath); // terminal panel on the RIGHT by default (user's own setting always wins)
         try { // remember the choice → the card is one-click next time
@@ -1103,7 +1113,14 @@ export function startLauncher(open = true) {
                 : resolved
                     ? `${resolved.label} starts automatically in the window's terminal — if the editor asks its one-time trust / automatic-tasks question, approve it.`
                     : (task.removed ? 'Auto-start removed — the window opens plain.' : '');
-            return { status: 200, body: { ok: true, opened: r.opened, note: [r.note, taskNote].filter(Boolean).join(' ') || undefined } };
+            return {
+                status: 200,
+                body: {
+                    ok: true, opened: r.opened,
+                    note: [r.note, taskNote, ...healNotes].filter(Boolean).join(' ') || undefined,
+                    ...(heal.repaired.length || heal.broken.length ? { claude_repair: heal } : {}),
+                },
+            };
         } catch (err: any) {
             return { status: 200, body: { ok: false, error: err.message, command: resumeCmd } };
         }

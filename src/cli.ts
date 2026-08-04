@@ -987,6 +987,12 @@ program
         }
         const CLIENT_BINS: Record<string, string> = { claude: 'claude', codex: 'codex', gemini: 'gemini' };
         const bin = CLIENT_BINS[String(options.client)] || String(options.client);
+        // Self-heal Claude settings before the client starts (legacy space-star
+        // permission rules make Claude skip the whole file, then quit at launch).
+        const { preflightClaudeSettings } = require('./core/clientConfig');
+        const heal = preflightClaudeSettings(proj.path);
+        for (const r of heal.repaired) console.log(`⬡ repaired ${r.fixed} outdated Claude permission rule${r.fixed === 1 ? '' : 's'} in ${r.file} (original: ${r.file}.bak-plexus-repair)`);
+        for (const b of heal.broken) console.error(`⚠ ${b.file}: ${b.error}`);
         const projectId = manifestOf(proj)?.project_id || proj.path;
         const { mintLaunchAuth } = require('./core/launchAuth');
         const token = mintLaunchAuth(projectId);

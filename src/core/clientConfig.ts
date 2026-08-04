@@ -126,8 +126,79 @@ export function writeProjectGeminiSettings(projectPath: string): { wrote: boolea
 }
 
 /** All per-project plugs in one call — every client with a project surface. */
-export function writeProjectPlugs(projectPath: string): { claude: ReturnType<typeof writeProjectMcpJson>; gemini: ReturnType<typeof writeProjectGeminiSettings> } {
-    return { claude: writeProjectMcpJson(projectPath), gemini: writeProjectGeminiSettings(projectPath) };
+export function writeProjectPlugs(projectPath: string): { claude: ReturnType<typeof writeProjectMcpJson>; gemini: ReturnType<typeof writeProjectGeminiSettings>; settings_heal: ReturnType<typeof preflightClaudeSettings> } {
+    return { claude: writeProjectMcpJson(projectPath), gemini: writeProjectGeminiSettings(projectPath), settings_heal: preflightClaudeSettings(projectPath) };
+}
+
+// ─── Claude settings self-heal ────────────────────────────────────────────────
+// Claude Code hard-rejects legacy permission rules written as "Tool(prefix *)"
+// (space-star; current syntax is "Tool(prefix:*)"), and one bad rule makes it
+// skip the ENTIRE settings file — dropping that file's saved permission allows
+// and MCP approvals — then die on an interactive error prompt when auto-started
+// (observed on the first outside beta machine). The transform below is exactly
+// the migration Claude's own error message prescribes, and the rules it touches
+// are dead weight today (the whole file is being skipped), so applying it
+// mechanically can only improve things. This is repair of the user's OWN rules,
+// never registration: no Plexus config is ever added here. Files that fail to
+// parse are reported, never guessed at.
+
+const LEGACY_PERMISSION_RULE = /^([A-Za-z][\w-]*)\((.*\S)\s+\*\)$/;
+
+function repairPermissionRules(config: any): number {
+    const perms = config?.permissions;
+    if (!perms || typeof perms !== 'object') return 0;
+    let fixed = 0;
+    for (const key of ['allow', 'deny', 'ask']) {
+        const rules = perms[key];
+        if (!Array.isArray(rules)) continue;
+        for (let i = 0; i < rules.length; i++) {
+            if (typeof rules[i] !== 'string') continue;
+            const m = rules[i].match(LEGACY_PERMISSION_RULE);
+            if (m) { rules[i] = `${m[1]}(${m[2]}:*)`; fixed++; }
+        }
+    }
+    return fixed;
+}
+
+/** Repair one Claude settings file in place (backup kept beside it). Returns
+ *  null when there is nothing to do (absent, empty, or already clean). */
+export function repairClaudeSettingsFile(file: string): { file: string; fixed?: number; broken?: string } | null {
+    let raw: string;
+    try { raw = fs.readFileSync(file, 'utf8'); } catch { return null; }
+    let config: any;
+    try { config = JSON.parse(raw); } catch { return { file, broken: 'not valid JSON — Claude will ignore this file until it is fixed' }; }
+    if (!config || typeof config !== 'object') return null;
+    const fixed = repairPermissionRules(config);
+    if (!fixed) return null;
+    try {
+        fs.copyFileSync(file, `${file}.bak-plexus-repair`);
+        fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
+        return { file, fixed };
+    } catch (e: any) {
+        return { file, broken: e.message };
+    }
+}
+
+/** Sweep every Claude settings file a launch would load (user + project scope)
+ *  and repair the legacy-rule class. Called at action moments only — project
+ *  open, the door, plug planting — never on passive dashboard refreshes. */
+export function preflightClaudeSettings(projectPath?: string): { repaired: { file: string; fixed: number }[]; broken: { file: string; error: string }[] } {
+    const candidates = [
+        path.join(os.homedir(), '.claude', 'settings.json'),
+        ...(projectPath ? [
+            path.join(projectPath, '.claude', 'settings.json'),
+            path.join(projectPath, '.claude', 'settings.local.json'),
+        ] : []),
+    ];
+    const repaired: { file: string; fixed: number }[] = [];
+    const broken: { file: string; error: string }[] = [];
+    for (const f of candidates) {
+        const r = repairClaudeSettingsFile(f);
+        if (!r) continue;
+        if (r.broken) broken.push({ file: r.file, error: r.broken });
+        else repaired.push({ file: r.file, fixed: r.fixed! });
+    }
+    return { repaired, broken };
 }
 
 /** Write/refresh the Claude Code project plug (<project>/.mcp.json). Merge-aware, backed up, idempotent. */

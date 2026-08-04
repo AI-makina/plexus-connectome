@@ -798,7 +798,8 @@ var FAQ=[
  {q:'Where is my data? Does anything leave my computer?',a:'Everything — brains, evidence, code — stays on your computer. The only things sent out are your license check (version, platform, project count — never names or content) and whatever you explicitly submit here.'},
  {q:'What happens if my license pauses or my trial ends?',a:'The launcher\\'s doors close, but nothing is deleted and nothing is held hostage — your projects and brains stay intact on your computer. Reactivating restores everything instantly.'},
  {q:'How do updates work?',a:'When a new version is available you\\'ll see a note here. Each running brain also asks for consent before hopping onto a new build — updates never force themselves.'},
- {q:'How do I remove a project from Plexus?',a:'Click the \\u2715 on its card. Plexus forgets the project (with an undo window) — your folder and files are never deleted.'}
+ {q:'How do I remove a project from Plexus?',a:'Click the \\u2715 on its card. Plexus forgets the project (with an undo window) — your folder and files are never deleted.'},
+ {q:'Claude quits right after starting (terminated with exit code 1)?',a:'Almost always a Claude settings file on this computer with outdated permission rules — Claude then skips the whole file and exits at launch. Plexus auto-repairs that case each time you open a project (a backup is kept beside the file, and the open note tells you when it happened). If it still occurs, scroll up in that terminal: Claude names the broken file near the top — fix that file, or message us below.'}
 ];
 function renderFaq(list){
   var h='';

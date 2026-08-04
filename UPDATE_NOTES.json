@@ -1,5 +1,13 @@
 [
   {
+    "date": "2026-08-04",
+    "title": "Self-healing Claude settings",
+    "notes": [
+      "Opening a project (or using its door) now auto-repairs outdated Claude permission rules — the legacy space-star form that made Claude skip its whole settings file, drop saved approvals, and quit at launch. A backup is kept beside every repaired file",
+      "Files with real syntax errors are never guessed at: Plexus names the file in the open note so it can be fixed, instead of letting the session die silently"
+    ]
+  },
+  {
     "date": "2026-07-18",
     "title": "Integration v2 — Anchor + Door + Intent Firewall",
     "notes": [

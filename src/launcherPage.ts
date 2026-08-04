@@ -238,6 +238,7 @@ export const LAUNCHER_HTML = /* html */ `<!doctype html>
   .licnote{margin:0 0 14px;padding:10px 14px;border-radius:11px;font:500 12.5px var(--sans);display:none}
   .licnote.grace{display:block;color:var(--gold);border:1px solid rgba(245,192,68,.35);background:rgba(245,192,68,.07)}
   .licnote.upd{display:block;color:var(--azure);border:1px solid rgba(111,168,255,.35);background:rgba(111,168,255,.07)}
+  .licnote.upd a{color:var(--azure);font-weight:650;text-decoration:underline;text-underline-offset:2px}
   .licnote b{font-weight:650}
   .faq-search{width:100%;background:var(--ink2);border:1px solid var(--line2);border-radius:10px;padding:9px 12px;color:var(--hi);font:13px var(--sans);outline:none;margin:2px 0 10px}
   .faq-search:focus{border-color:rgba(167,139,250,.55)}
@@ -797,7 +798,7 @@ var FAQ=[
  {q:'Why does Codex wear a "global" tag?',a:'Codex only supports a global, always-on connection (its maker\\'s design). Plexus never connects an AI globally, so you run that one command yourself, once — and the tag keeps the exception visible. Disengage removes it with one click.'},
  {q:'Where is my data? Does anything leave my computer?',a:'Everything — brains, evidence, code — stays on your computer. The only things sent out are your license check (version, platform, project count — never names or content) and whatever you explicitly submit here.'},
  {q:'What happens if my license pauses or my trial ends?',a:'The launcher\\'s doors close, but nothing is deleted and nothing is held hostage — your projects and brains stay intact on your computer. Reactivating restores everything instantly.'},
- {q:'How do updates work?',a:'When a new version is available you\\'ll see a note here. Each running brain also asks for consent before hopping onto a new build — updates never force themselves.'},
+ {q:'How do updates work?',a:'When a new version is available you\\'ll see a note here with a download link. Run the installer, then reopen Plexus — the installer stops the old version for you. Each running brain also asks for consent before hopping onto a new build — updates never force themselves.'},
  {q:'How do I remove a project from Plexus?',a:'Click the \\u2715 on its card. Plexus forgets the project (with an undo window) — your folder and files are never deleted.'},
  {q:'Claude quits right after starting (terminated with exit code 1)?',a:'Almost always a Claude settings file on this computer with outdated permission rules — Claude then skips the whole file and exits at launch. Plexus auto-repairs that case each time you open a project (a backup is kept beside the file, and the open note tells you when it happened). If it still occurs, scroll up in that terminal: Claude names the broken file near the top — fix that file, or message us below.'}
 ];
@@ -866,7 +867,7 @@ function acceptTerms(){
   }).catch(function(){});
   var un=document.getElementById('upd-note'); if(!un) return;
   fetch('/api/launcher/update-check').then(function(r){return r.json()}).then(function(j){
-    if(j && j.available){ un.className='licnote upd'; un.innerHTML='<b>Update available</b> — Plexus '+j.available.version+' is out'+(j.available.notes&&j.available.notes.length?': '+j.available.notes[0]:'')+'. It installs on your say-so, never by itself.'; }
+    if(j && j.available){ un.className='licnote upd'; un.innerHTML='<b>Update available</b> — Plexus '+j.available.version+' is out'+(j.available.notes&&j.available.notes.length?': '+j.available.notes[0]:'')+'. It installs on your say-so, never by itself.'+(j.available.url?' <a href="'+j.available.url+'">Download Plexus '+j.available.version+' \\u21e3</a> — run it, then reopen Plexus.':''); }
   }).catch(function(){});
 })();
 
